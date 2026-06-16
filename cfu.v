@@ -51,7 +51,7 @@ module cfu (
         .rslt_o         (rslt           )
     );
     assign stall_o = !ap_idle && !ap_done;
-    assign rslt_o = (ap_start) ? rslt : 0;
+    assign rslt_o = (ap_done) ? rslt : 0;
 endmodule
 
 `endif

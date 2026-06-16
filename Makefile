@@ -1,19 +1,26 @@
 # CFU Proving Ground since 2025-02    Copyright(c) 2025 Archlab. Science Tokyo
 # Released under the MIT license https://opensource.org/licenses/mit
 
-GCC     := /tools/cad/riscv/rv32ima/bin/riscv32-unknown-elf-gcc
-GPP     := /tools/cad/riscv/rv32ima/bin/riscv32-unknown-elf-g++
-OBJCOPY := /tools/cad/riscv/rv32ima/bin/riscv32-unknown-elf-objcopy
-OBJDUMP := /tools/cad/riscv/rv32ima/bin/riscv32-unknown-elf-objdump
-VIVADO  := /tools/Xilinx/Vivado/2024.1/bin/vivado
-VPP     := /tools/Xilinx/Vitis/2024.1/bin/v++
-RTLSIM  := /tools/cad/bin/verilator
+GCC     := /var/archlab-modules/riscv-gnu-toolchain/2026.03.13/bin/riscv64-unknown-elf-gcc
+GPP     := /var/archlab-modules/riscv-gnu-toolchain/2026.03.13/bin/riscv64-unknown-elf-g++
+OBJCOPY := /var/archlab-modules/riscv-gnu-toolchain/2026.03.13/bin/riscv64-unknown-elf-objcopy
+OBJDUMP := /var/archlab-modules/riscv-gnu-toolchain/2026.03.13/bin/riscv64-unknown-elf-objdump
+VIVADO  := /var/archlab-modules/amd/2025.2/Vivado/bin/vivado
+VPP     := /var/archlab-modules/amd/2025.2/Vitis/bin/v++
+RTLSIM  := /var/archlab-modules/verilator/5.046/bin/verilator
 
-TARGET := arty_a7
-#TARGET := cmod_a7
-#TARGET := nexys_a7
+# TARGET := arty_a7
+TARGET := cmod_a7
+# TARGET := nexys_a7
 
 USE_HLS ?= 0
+
+PART_arty_a7  := xc7a35tcsg324-1
+PART_nexys_a7 := xc7a100tcsg324-1
+PART_cmod_a7  := xc7a35ticpg236-1L
+
+HLS_PART := $(or $(PART_$(TARGET)),$(error Unsupported TARGET: $(TARGET)))
+HLS_CFG  := constr/cfu_hls.cfg
 
 .PHONY: build prog run clean
 all: prog build
@@ -64,7 +71,7 @@ run:
 drun:
 	./obj_dir/top | build/dispemu 1
 
-TCL_ARG := $(if $(ifeq ($(USE_HLS),1)),--hls,)
+TCL_ARG := $(if $(filter 1,$(USE_HLS)),--hls,)
 bit:
 	@if [ ! -f memi.txt ] || [ ! -f memd.txt ]; then \
 		echo "Please run 'make prog' first."; \
@@ -88,22 +95,33 @@ conf:
 	$(VIVADO) -mode batch -source scripts/prog_dev.tcl
 
 vpp:
-	$(VPP) -c --mode hls --config constr/cfu_hls.cfg --work_dir vitis
+	sed -i -E 's/^[[:space:]]*#?[[:space:]]*(part=)/# \1/' $(HLS_CFG)
+	sed -i -E 's/^# (part=$(HLS_PART))$$/\1/' $(HLS_CFG)
+	@test "$$(grep -c '^part=' $(HLS_CFG))" -eq 1
+	$(VPP) -c --mode hls --config $(HLS_CFG) --work_dir vitis
 	if [ -d cfu ]; then rm -rf cfu; fi
 	mkdir -p cfu
 	cp vitis/hls/impl/verilog/*.v cfu/.
-	cp vitis/hls/impl/verilog/*.tcl cfu/.
+	cp -f vitis/hls/impl/verilog/*.tcl cfu/. 2>/dev/null || true
 
 hls-sim:
 	make prog
-	$(RTLSIM) --binary --trace --top-module top -DUSE_HLS -Icfu --Wno-TIMESCALEMOD --Wno-WIDTHTRUNC --Wno-WIDTHEXPAND -o top *.v
+	tmp_files=""; \
+	for src in cfu/*.v; do \
+		tmp="cfu/.sim_$$(basename "$$src")"; \
+		cp "$$src" "$$tmp"; \
+		perl -pi -e 's/#0[ \t]+//' "$$tmp"; \
+		tmp_files="$$tmp_files $$tmp"; \
+	done; \
+	trap 'rm -f $$tmp_files' EXIT; \
+	$(RTLSIM) --binary --trace --top-module top -DUSE_HLS -Icfu --Wno-TIMESCALEMOD --Wno-WIDTHTRUNC --Wno-WIDTHEXPAND -o top *.v $$tmp_files
 
 init:
 	cp constr/$(TARGET).xdc main.xdc
 	cp constr/build_$(TARGET).tcl build.tcl
 
 clean:
-	rm -rf obj_dir rvcpu-32im* vivado* .Xil
+	rm -rf obj_dir rvcpu-32im* vivado* .Xil vitis*
 
 reset-hard:
 	rm -rf obj_dir build rvcpu-32im* sample1.txt vivado* .Xil build.tcl main.xdc
