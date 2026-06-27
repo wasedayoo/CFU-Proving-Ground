@@ -59,12 +59,12 @@ module main (
         .rdata_o (imem_rdata)   // output reg  [DATA_WIDTH-1:0]
     );
 
-    wire [31:0] dmem_addr  = dbus_addr;
-    wire [31:0] dmem_wdata = dbus_wdata;
-    wire  [3:0] dmem_wstrb = dbus_wstrb;
+    wire [`XLEN-1:0] dmem_addr  = dbus_addr;
+    wire [`XLEN-1:0] dmem_wdata = dbus_wdata;
+    wire  [`XBYTES-1:0] dmem_wstrb = dbus_wstrb;
     wire        dmem_re    = !dbus_we & (dbus_addr[28]);
     wire        dmem_we    =  dbus_we & (dbus_addr[28]);
-    wire [31:0] dmem_rdata;
+    wire [`XLEN-1:0] dmem_rdata;
     m_dmem dmem (
         .clk_i   (clk),         // input  wire
         .we_i    (dmem_we),     // input  wire
@@ -92,7 +92,7 @@ module main (
     wire        perf_we    = dbus_we & (dbus_addr[30]);
     wire  [3:0] perf_addr  = dbus_addr[3:0];
     wire  [2:0] perf_wdata = dbus_wdata[2:0];
-    wire [31:0] perf_rdata;
+    wire [`XLEN-1:0] perf_rdata;
     perf_cntr perf (
         .clk_i   (clk),         // input  wire
         .addr_i  (perf_addr),   // input  wire [3:0]
@@ -116,7 +116,7 @@ endmodule
 
 module m_imem (
     input  wire        clk_i,
-    input  wire [31:0] raddr_i,
+    input  wire [`XLEN-1:0] raddr_i,
     output wire [31:0] rdata_o
 );
 
@@ -136,18 +136,18 @@ module m_dmem (
     input  wire        clk_i,
     input  wire        re_i,
     input  wire        we_i,
-    input  wire [31:0] addr_i,
-    input  wire [31:0] wdata_i,
-    input  wire  [3:0] wstrb_i,
-    output wire [31:0] rdata_o
+    input  wire [`XLEN-1:0] addr_i,
+    input  wire [`XLEN-1:0] wdata_i,
+    input  wire  [`XBYTES-1:0] wstrb_i,
+    output wire [`XLEN-1:0] rdata_o
 );
 
-    (* ram_style = "block" *) reg [31:0] dmem[0:`DMEM_ENTRIES-1];
+    (* ram_style = "block" *) reg [`XLEN-1:0] dmem[0:`DMEM_ENTRIES-1];
     `include "memd.txt"
 
     wire [`DMEM_ADDRW-1:0] valid_addr = addr_i[`DMEM_ADDRW+1:2];
 
-    reg [31:0] rdata = 0;
+    reg [`XLEN-1:0] rdata = 0;
     always @(posedge clk_i) begin
         if (we_i) begin
             if (wstrb_i[0]) dmem[valid_addr][7:0]   <= wdata_i[7:0];
@@ -165,11 +165,11 @@ module perf_cntr (
     input  wire  [3:0] addr_i,
     input  wire  [2:0] wdata_i,
     input  wire        w_en_i,
-    output wire [31:0] rdata_o
+    output wire [`XLEN-1:0] rdata_o
 );
     reg [63:0] mcycle   = 0;
     reg  [1:0] cnt_ctrl = 0;
-    reg [31:0] rdata    = 0;
+    reg [`XLEN-1:0] rdata    = 0;
 
     always @(posedge clk_i) begin
         rdata <= (addr_i[2]) ? mcycle[31:0] : mcycle[63:32];

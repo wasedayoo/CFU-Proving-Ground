@@ -10,10 +10,10 @@ module cfu (
     input  wire        en_i,
     input  wire [ 2:0] funct3_i,
     input  wire [ 6:0] funct7_i,
-    input  wire [31:0] src1_i,
-    input  wire [31:0] src2_i,
+    input  wire [`XLEN-1:0] src1_i,
+    input  wire [`XLEN-1:0] src2_i,
     output wire        stall_o,
-    output wire [31:0] rslt_o
+    output wire [`XLEN-1:0] rslt_o
 );
     assign stall_o = 0;
     assign rslt_o  = (en_i) ? src1_i | src2_i : 0;
@@ -26,10 +26,10 @@ module cfu (
     input  wire        en_i,
     input  wire [ 2:0] funct3_i,
     input  wire [ 6:0] funct7_i,
-    input  wire [31:0] src1_i,
-    input  wire [31:0] src2_i,
+    input  wire [`XLEN-1:0] src1_i,
+    input  wire [`XLEN-1:0] src2_i,
     output wire        stall_o,
-    output wire [31:0] rslt_o
+    output wire [`XLEN-1:0] rslt_o
 );
 
     reg cfu_en = 0; always @(posedge clk_i) cfu_en <= (ap_ready) ? 0 : ap_start;
@@ -37,7 +37,7 @@ module cfu (
     wire ap_done;
     wire ap_idle;
     wire ap_ready;
-    wire [31:0] rslt;
+    wire [`XLEN-1:0] rslt;
     cfu_hls cfu_hls (
         .ap_clk         (clk_i          ),
         .ap_start       (ap_start       ),
