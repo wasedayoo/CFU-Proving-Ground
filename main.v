@@ -38,7 +38,11 @@ module main (
 
     reg rdata_sel = 0;
     always @(posedge clk) rdata_sel <= dbus_addr[30];
+`ifdef RV64
+    assign dbus_rdata = (rdata_sel) ? {2{perf_rdata[31:0]}} : dmem_rdata;
+`else
     assign dbus_rdata = (rdata_sel) ? perf_rdata : dmem_rdata;
+`endif
 
     cpu cpu (
         .clk_i         (clk),         // input  wire
@@ -145,7 +149,11 @@ module m_dmem (
     (* ram_style = "block" *) reg [`XLEN-1:0] dmem[0:`DMEM_ENTRIES-1];
     `include "memd.txt"
 
+`ifdef RV64
+    wire [`DMEM_ADDRW-1:0] valid_addr = addr_i[`DMEM_ADDRW+2:3];
+`else
     wire [`DMEM_ADDRW-1:0] valid_addr = addr_i[`DMEM_ADDRW+1:2];
+`endif
 
     reg [`XLEN-1:0] rdata = 0;
     always @(posedge clk_i) begin
@@ -154,6 +162,12 @@ module m_dmem (
             if (wstrb_i[1]) dmem[valid_addr][15:8]  <= wdata_i[15:8];
             if (wstrb_i[2]) dmem[valid_addr][23:16] <= wdata_i[23:16];
             if (wstrb_i[3]) dmem[valid_addr][31:24] <= wdata_i[31:24];
+`ifdef RV64
+            if (wstrb_i[4]) dmem[valid_addr][39:32] <= wdata_i[39:32];
+            if (wstrb_i[5]) dmem[valid_addr][47:40] <= wdata_i[47:40];
+            if (wstrb_i[6]) dmem[valid_addr][55:48] <= wdata_i[55:48];
+            if (wstrb_i[7]) dmem[valid_addr][63:56] <= wdata_i[63:56];
+`endif
         end
         if (re_i) rdata <= dmem[valid_addr];
     end
@@ -165,11 +179,11 @@ module perf_cntr (
     input  wire  [3:0] addr_i,
     input  wire  [2:0] wdata_i,
     input  wire        w_en_i,
-    output wire [`XLEN-1:0] rdata_o
+    output wire [31:0] rdata_o
 );
     reg [63:0] mcycle   = 0;
     reg  [1:0] cnt_ctrl = 0;
-    reg [`XLEN-1:0] rdata    = 0;
+    reg [31:0] rdata    = 0;
 
     always @(posedge clk_i) begin
         rdata <= (addr_i[2]) ? mcycle[31:0] : mcycle[63:32];
