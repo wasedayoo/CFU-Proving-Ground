@@ -87,7 +87,6 @@ module top;
 //==============================================================================
 // Debug Dump
 //------------------------------------------------------------------------------
-/*
     reg r_rst = 0;
     always @(posedge clk) r_rst <= !m0.rst;
     always @(posedge clk) if (r_rst) begin
@@ -108,7 +107,6 @@ module top;
 
         $write("\n");
     end
-*/
 
     wire sda, scl, dc, res;
     main m0 (

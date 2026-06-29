@@ -145,7 +145,8 @@ module m_dmem (
     (* ram_style = "block" *) reg [`XLEN-1:0] dmem[0:`DMEM_ENTRIES-1];
     `include "memd.txt"
 
-    wire [`DMEM_ADDRW-1:0] valid_addr = addr_i[`DMEM_ADDRW+1:2];
+    localparam BYTE_OFFSET = $clog2(`XBYTES);
+    wire [`DMEM_ADDRW-1:0] valid_addr = addr_i[`DMEM_ADDRW+(BYTE_OFFSET-1):BYTE_OFFSET];
 
     reg [`XLEN-1:0] rdata = 0;
     always @(posedge clk_i) begin
