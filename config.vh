@@ -22,11 +22,7 @@
 `define DMEM_SIZE (16*1024) // data memory size in byte
 
 `define IMEM_ENTRIES (`IMEM_SIZE/4)
-`ifdef RV64
-`define DMEM_ENTRIES (`DMEM_SIZE/8)
-`else
-`define DMEM_ENTRIES (`DMEM_SIZE/4)
-`endif
+`define DMEM_ENTRIES (`DMEM_SIZE/`XBYTES)
 
 `define IMEM_ADDRW ($clog2(`IMEM_ENTRIES))
 `define DMEM_ADDRW ($clog2(`DMEM_ENTRIES))

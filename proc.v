@@ -442,7 +442,7 @@ module cpu (
 endmodule
 
 `define BTB_IDXW $clog2(`BTB_ENTRY)  // BTB index width
-`define BTB_OSTW $clog2(`XBYTES)     // BTB offset width
+`define BTB_OSTW $clog2(`IBUS_DATA_WIDTH/8)  // BTB offset width
 /******************************************************************************************/
 module bimodal (
     input  wire             clk_i,
@@ -858,27 +858,15 @@ module store_unit (
     input  wire [`XLEN-1:0] src2_i,
     input  wire [`XLEN-1:0] imm_i,
     output wire [`XLEN-1:0] dbus_addr_o,
-`ifdef RV64
-    output wire [ 2:0] dbus_offset_o,
-`else
-    output wire [ 1:0] dbus_offset_o,
-`endif
+    output wire [`DBUS_OFFSET_W-1:0] dbus_offset_o,
     output wire        dbus_wvalid_o,
     output wire [`XLEN-1:0] dbus_wdata_o,
-`ifdef RV64
-    output wire [ 7:0] dbus_wstrb_o
-`else
-    output wire [ 3:0] dbus_wstrb_o
-`endif
+    output wire [`DBUS_STRB_WIDTH-1:0] dbus_wstrb_o
 );
 
     assign dbus_addr_o   = (valid_i && (lsu_ctrl_i[`LSU_CTRL_IS_STORE] ||
                                         lsu_ctrl_i[`LSU_CTRL_IS_LOAD])) ? src1_i + imm_i : 0;
-`ifdef RV64
-    assign dbus_offset_o = dbus_addr_o[2:0];
-`else
-    assign dbus_offset_o = dbus_addr_o[1:0];
-`endif
+    assign dbus_offset_o = dbus_addr_o[`DBUS_OFFSET_W-1:0];
     assign dbus_wvalid_o = valid_i && lsu_ctrl_i[`LSU_CTRL_IS_STORE];
 
     wire w_sb = lsu_ctrl_i[`LSU_CTRL_IS_BYTE];
@@ -907,11 +895,7 @@ endmodule
 /******************************************************************************************/
 module load_unit (
     input  wire [`LSU_CTRL_WIDTH-1:0] lsu_ctrl_i,
-`ifdef RV64
-    input  wire [ 2:0] dbus_offset_i,
-`else
-    input  wire [ 1:0] dbus_offset_i,
-`endif
+    input  wire [`DBUS_OFFSET_W-1:0] dbus_offset_i,
     input  wire [`XLEN-1:0] dbus_rdata_i,
     output wire [`XLEN-1:0] rslt_o
 );
@@ -921,7 +905,6 @@ module load_unit (
     wire w_lw = lsu_ctrl_i[`LSU_CTRL_IS_WORD];
     wire w_signed = lsu_ctrl_i[`LSU_CTRL_IS_SIGNED];
     wire w_load = lsu_ctrl_i[`LSU_CTRL_IS_LOAD];
-
 `ifdef RV64
     wire [`XLEN-1:0] d_shifted = dbus_rdata_i >> {dbus_offset_i, 3'b0};
     wire [7:0] b = d_shifted[7:0];
@@ -934,7 +917,7 @@ module load_unit (
                     (w_lw) ? {{(`XLEN-32){w_signed & w[31]}}, w} :
                     d_shifted;
 `else
-    wire [1:0] ost = dbus_offset_i;  // offset
+    wire [`DBUS_OFFSET_W-1:0] ost = dbus_offset_i;  // offset
     wire [`XLEN-1:0] d = dbus_rdata_i;  // data
 
     wire w_lb_sign = w_lb & ((ost==0) ? d[7] : (ost==1) ? d[15] :(ost==2) ? d[23] : d[31]) & w_signed;
