@@ -11,7 +11,7 @@
 `define LCD_ROTATE 0 // 0: 0 degree, 1: 90 degree, 2: 180 degree, 3: 270 degree (Left Rotate)
 
 // cpu
-`define CLK_FREQ_MHZ 160  // operating clock frequency in MHz
+`define CLK_FREQ_MHZ 130  // operating clock frequency in MHz
 
 `define RESET_VECTOR 'h00000000
 
@@ -40,8 +40,17 @@
 `define TOHOST_ADDR 'h40008000 // do not modify, this is hard coded in the interconnect
 
 // cpu
+`define RV64
+
+`ifdef RV64
+`define XLEN 64
+`define XBYTES (`XLEN/8)
+`define XLEN_LOG2 6
+`else
 `define XLEN 32
 `define XBYTES (`XLEN/8)
+`define XLEN_LOG2 5
+`endif
 
 `define NOP 32'h00000013 // addi  x0, x0, 0
 `define UNIMP 32'hC0001073 // csrrw x0, cycle, x0
@@ -79,7 +88,12 @@
 `define ALU_CTRL_IS_XOR_OR 6
 `define ALU_CTRL_IS_OR_AND 7
 `define ALU_CTRL_IS_SRC2 8
+`define ALU_CTRL_IS_W 9
+`ifdef RV64
+`define ALU_CTRL_WIDTH 10
+`else
 `define ALU_CTRL_WIDTH 9
+`endif
 
 // bru control
 `define BRU_CTRL_IS_CTRL_TSFR 0
@@ -99,7 +113,12 @@
 `define LSU_CTRL_IS_BYTE 3
 `define LSU_CTRL_IS_HALFWORD 4
 `define LSU_CTRL_IS_WORD 5
+`ifdef RV64
+`define LSU_CTRL_IS_DOUBLEWORD 6
+`define LSU_CTRL_WIDTH 7
+`else
 `define LSU_CTRL_WIDTH 6
+`endif
 
 // perf control
 `define PERF_CTRL_IS_CYCLE 0
@@ -113,13 +132,23 @@
 `define MUL_CTRL_IS_SRC1_SIGNED 1
 `define MUL_CTRL_IS_SRC2_SIGNED 2
 `define MUL_CTRL_IS_HIGH 3
+`ifdef RV64
+`define MUL_CTRL_IS_W 4
+`define MUL_CTRL_WIDTH 5
+`else
 `define MUL_CTRL_WIDTH 4
+`endif
 
 // div control
 `define DIV_CTRL_IS_DIV 0
 `define DIV_CTRL_IS_SIGNED 1
 `define DIV_CTRL_IS_REM 2
+`ifdef RV64
+`define DIV_CTRL_IS_W 3
+`define DIV_CTRL_WIDTH 4
+`else
 `define DIV_CTRL_WIDTH 3
+`endif
 
 // cfu control
 `define CFU_CTRL_IS_CFU 0

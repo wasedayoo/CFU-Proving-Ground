@@ -448,15 +448,15 @@ module bimodal (
     input  wire             clk_i,
     input  wire             rst_i,
     input  wire             stall_i,
-    input  wire [`XLEN-1:0] raddr_i,
+    input  wire [     31:0] raddr_i,
     output wire [      1:0] pat_hist_o,
     output wire             br_pred_tkn_o,
     output wire [`PC_W-1:0] br_pred_pc_o,
     input  wire             br_tkn_i,
     input  wire             br_tsfr_i,
-    input  wire [`XLEN-1:0] waddr_i,
+    input  wire [     31:0] waddr_i,
     input  wire [      1:0] pat_hist_i,
-    input  wire [`XLEN-1:0] br_tkn_pc_i
+    input  wire [     31:0] br_tkn_pc_i
 );
 
     integer i;
@@ -467,7 +467,7 @@ module bimodal (
     wire [`BTB_IDXW-1:0] btb_ridx = raddr_i[`BTB_IDXW+`BTB_OSTW-1:`BTB_OSTW];
     wire [`BTB_IDXW-1:0] btb_widx = waddr_i[`BTB_IDXW+`BTB_OSTW-1:`BTB_OSTW];
 
-    reg [`PC_W-1:0] r_btb_entry;
+    reg [31:0] r_btb_entry;
     always @(posedge clk_i) if (!stall_i) begin
         r_btb_entry <= btb[btb_ridx];
         if (br_tsfr_i) begin
@@ -499,7 +499,13 @@ module pre_decoder (
         (opcode == 5'b00000) ? `I_TYPE :  // LOAD
         (opcode == 5'b01000) ? `S_TYPE :  // STORE
         (opcode == 5'b00100) ? `I_TYPE :  // OP-IMM
+`ifdef RV64
+        (opcode == 5'b00110) ? `I_TYPE :  // OP-IMM-32
+`endif
         (opcode == 5'b01100) ? `R_TYPE :  // OP
+`ifdef RV64
+        (opcode == 5'b01110) ? `R_TYPE :  // OP-32
+`endif
         (opcode == 5'b00010) ? `R_TYPE : `NONE_TYPE;  // CUSTOM-0 : NONE
 
     assign rd_o = ((instr_type_o == `S_TYPE) | (instr_type_o == `B_TYPE)) ? 0 : ir_i[11:7];
@@ -544,6 +550,9 @@ module alu (
     wire w_signed = alu_ctrl_i[`ALU_CTRL_IS_SIGNED];
     wire w_neg    = alu_ctrl_i[`ALU_CTRL_IS_NEG];
     wire w_less   = alu_ctrl_i[`ALU_CTRL_IS_LESS];
+`ifdef RV64
+    wire w_is_w   = alu_ctrl_i[`ALU_CTRL_IS_W];
+`endif
 
     wire [`XLEN+1:0] adder_src1   = {w_signed && src1_i[`XLEN-1], src1_i, 1'b1};
     wire [`XLEN+1:0] adder_src2   = {w_signed && src2_i[`XLEN-1], src2_i, 1'b0} ^ {(`XLEN+2){w_neg}};
@@ -551,12 +560,29 @@ module alu (
     wire        less_rslt    = w_less && adder_rslt_t[`XLEN+1];
     wire [`XLEN-1:0] adder_rslt   = (alu_ctrl_i[`ALU_CTRL_IS_ADD]) ? adder_rslt_t[`XLEN:1] : 0;
 
+`ifdef RV64
+    wire [31:0] src1_32 = src1_i[31:0];
+    wire [ 4:0] shamt_32 = src2_i[4:0];
+    wire [31:0] left_shift_32 = src1_32 << shamt_32;
+    wire signed [32:0] right_shifter_src1_32 = {w_signed && src1_32[31], src1_32};
+    wire [32:0] arith_shift_32_tmp = right_shifter_src1_32 >>> shamt_32;
+    wire [31:0] right_shift_32 = arith_shift_32_tmp[31:0];
+`endif
+
     wire signed  [`XLEN:0] right_shifter_src1 = {w_signed && src1_i[`XLEN-1], src1_i};
     wire  [$clog2(`XLEN)-1:0] shamt              = src2_i[$clog2(`XLEN)-1:0];
+`ifdef RV64
+    wire [`XLEN:0] arith_shift_64_tmp = right_shifter_src1 >>> shamt;
+    wire [`XLEN-1:0] left_shifter_rslt  = (alu_ctrl_i[`ALU_CTRL_IS_SHIFT_LEFT] ) ?
+                                     (w_is_w ? {32'b0, left_shift_32} : src1_i << shamt) : 0;
+    wire [`XLEN-1:0] right_shifter_rslt = (alu_ctrl_i[`ALU_CTRL_IS_SHIFT_RIGHT]) ?
+                                     (w_is_w ? {32'b0, right_shift_32} : arith_shift_64_tmp[`XLEN-1:0]) : 0;
+`else
     wire [`XLEN-1:0] left_shifter_rslt  = (alu_ctrl_i[`ALU_CTRL_IS_SHIFT_LEFT] ) ?
                                      src1_i <<  shamt : 0;
     wire [`XLEN-1:0] right_shifter_rslt = (alu_ctrl_i[`ALU_CTRL_IS_SHIFT_RIGHT]) ?
                                      right_shifter_src1 >>> shamt : 0;
+`endif
 
     wire [`XLEN-1:0] bitwise_rslt       = ((alu_ctrl_i[`ALU_CTRL_IS_XOR_OR]) ?
                                      (src1_i ^ src2_i) : 0) |
@@ -564,8 +590,14 @@ module alu (
                                       ? (src1_i & src2_i) : 0);
     wire [`XLEN-1:0] lui_auipc_rslt     = (alu_ctrl_i[`ALU_CTRL_IS_SRC2]) ? src2_i : 0;
 
-    assign rslt_o = less_rslt | adder_rslt | left_shifter_rslt | right_shifter_rslt |
-                    bitwise_rslt | lui_auipc_rslt | j_pc4_i;
+    wire [`XLEN-1:0] rslt_t = less_rslt | adder_rslt | left_shifter_rslt | right_shifter_rslt |
+                              bitwise_rslt | lui_auipc_rslt | j_pc4_i;
+
+`ifdef RV64
+    assign rslt_o = w_is_w ? {{32{rslt_t[31]}}, rslt_t[31:0]} : rslt_t;
+`else
+    assign rslt_o = rslt_t;
+`endif
 endmodule
 
 /******************************************************************************************/
@@ -615,7 +647,7 @@ module divider (
     input  wire        rst_i      ,
     input  wire        stall_i    ,
     input  wire        valid_i    ,
-    input  wire  [2:0] div_ctrl_i ,
+    input  wire [`DIV_CTRL_WIDTH-1:0] div_ctrl_i ,
     input  wire [`XLEN-1:0] src1_i     ,
     input  wire [`XLEN-1:0] src2_i     ,
     output wire        stall_o    ,
@@ -633,6 +665,9 @@ module divider (
     reg        is_div_rslt_neg;
     reg        is_rem_rslt_neg;
     reg        is_rem;
+`ifdef RV64
+    reg        is_w;
+`endif
     reg  [$clog2(`XLEN)-1:0] cntr;
 
     wire [`XLEN-1:0] uintx_remainder = (is_dividend_neg) ? ~remainder+1 : remainder;
@@ -640,12 +675,28 @@ module divider (
     wire [`XLEN:0] difference      = {remainder[`XLEN-2:0], quotient[`XLEN-1]} - divisor;
     wire        q               = !difference[`XLEN];
 
+`ifdef RV64
+    wire [`XLEN-1:0] raw_rslt = (is_rem) ? ((is_rem_rslt_neg) ? ~remainder+1 : remainder) :
+                                      ((is_div_rslt_neg) ? ~quotient+1  : quotient ) ;
+    assign rslt_o = (state!=`DIV_RET) ? 0 :
+                    (is_w) ? {{32{raw_rslt[31]}}, raw_rslt[31:0]} : raw_rslt;
+`else
     assign rslt_o = (state!=`DIV_RET) ? 0 :
                     (is_rem) ? ((is_rem_rslt_neg) ? ~remainder+1 : remainder) :
                     ((is_div_rslt_neg) ? ~quotient+1  : quotient ) ;
+`endif
 
     wire w_div    = div_ctrl_i[`DIV_CTRL_IS_DIV];
     wire w_signed = div_ctrl_i[`DIV_CTRL_IS_SIGNED];
+`ifdef RV64
+    wire w_is_w   = div_ctrl_i[`DIV_CTRL_IS_W];
+    wire [`XLEN-1:0] s1 = (w_is_w) ? (w_signed ? {{32{src1_i[31]}}, src1_i[31:0]} : {32'd0, src1_i[31:0]}) : src1_i;
+    wire [`XLEN-1:0] s2 = (w_is_w) ? (w_signed ? {{32{src2_i[31]}}, src2_i[31:0]} : {32'd0, src2_i[31:0]}) : src2_i;
+`else
+    wire [`XLEN-1:0] s1 = src1_i;
+    wire [`XLEN-1:0] s2 = src2_i;
+`endif
+
     wire [1:0] w_state = (w_init) ? `DIV_CHECK :
                          (state==`DIV_CHECK && divisor==0) ? `DIV_RET : // Note
                          (state==`DIV_CHECK && divisor!=0) ? `DIV_EXEC :
@@ -654,45 +705,121 @@ module divider (
 
     wire w_init = (state==`DIV_IDLE && valid_i && w_div);
     always @(posedge clk_i) if (!stall_i) begin
-        is_rem            <= (w_init) ? div_ctrl_i[`DIV_CTRL_IS_REM] : is_rem;
-        is_dividend_neg   <= (w_init) ? w_signed && src1_i[`XLEN-1] : is_dividend_neg;
-        is_divisor_neg    <= (w_init) ? w_signed && src2_i[`XLEN-1] : is_divisor_neg;
-        is_div_rslt_neg   <= (w_init) ? w_signed && (src1_i[`XLEN-1] ^ src2_i[`XLEN-1]) :
-                             (state==`DIV_CHECK && divisor==0) ? 0 : is_div_rslt_neg;
-        is_rem_rslt_neg   <= (w_init) ? w_signed &&  src1_i[`XLEN-1] :
-                             (state==`DIV_CHECK && divisor==0) ? 0 : is_rem_rslt_neg;
+        if (rst_i) begin
+            state <= `DIV_IDLE;
+        end else begin
+            is_rem            <= (w_init) ? div_ctrl_i[`DIV_CTRL_IS_REM] : is_rem;
+`ifdef RV64
+            is_w              <= (w_init) ? w_is_w : is_w;
+`endif
+            is_dividend_neg   <= (w_init) ? w_signed && s1[`XLEN-1] : is_dividend_neg;
+            is_divisor_neg    <= (w_init) ? w_signed && s2[`XLEN-1] : is_divisor_neg;
+            is_div_rslt_neg   <= (w_init) ? w_signed && (s1[`XLEN-1] ^ s2[`XLEN-1]) :
+                                 (state==`DIV_CHECK && divisor==0) ? 0 : is_div_rslt_neg;
+            is_rem_rslt_neg   <= (w_init) ? w_signed &&  s1[`XLEN-1] :
+                                 (state==`DIV_CHECK && divisor==0) ? 0 : is_rem_rslt_neg;
 
-        divisor <= (w_init) ? src2_i :
-                   (state==`DIV_CHECK && divisor!=0) ? uintx_divisor : divisor;
+            divisor <= (w_init) ? s2 :
+                       (state==`DIV_CHECK && divisor!=0) ? uintx_divisor : divisor;
 
-        {remainder, quotient} <= (w_init) ? {src1_i, {`XLEN{1'b0}}} :
-                   (state==`DIV_CHECK && divisor==0) ? {remainder, {`XLEN{1'b1}}} :
-                   (state==`DIV_CHECK && divisor!=0) ? {{`XLEN{1'b0}}, uintx_remainder} :
-                   (state==`DIV_EXEC) ? ((q) ? {difference[`XLEN-1:0], quotient[`XLEN-2:0], 1'b1} :
-                                               {remainder[`XLEN-2:0], quotient, 1'b0}) :
-                   {remainder, quotient};
+            {remainder, quotient} <= (w_init) ? {s1, {`XLEN{1'b0}}} :
+                       (state==`DIV_CHECK && divisor==0) ? {remainder, {`XLEN{1'b1}}} :
+                       (state==`DIV_CHECK && divisor!=0) ? {{`XLEN{1'b0}}, uintx_remainder} :
+                       (state==`DIV_EXEC) ? ((q) ? {difference[`XLEN-1:0], quotient[`XLEN-2:0], 1'b1} :
+                                                   {remainder[`XLEN-2:0], quotient, 1'b0}) :
+                       {remainder, quotient};
 
-        cntr <= (state==`DIV_CHECK) ? `XLEN-1 : (state==`DIV_EXEC) ?  cntr-1 : cntr;
-        state <= w_state;
+            cntr <= (state==`DIV_CHECK) ? `XLEN-1 : (state==`DIV_EXEC) ?  cntr-1 : cntr;
+            state <= w_state;
+        end
     end
 endmodule
 
+`ifdef RV64
+`define MUL_IDLE   0
+`define MUL_EXEC_0 1
+`define MUL_EXEC_1 2
+`define MUL_EXEC_2 3
+`define MUL_EXEC_3 4
+`define MUL_RET    5
+`else
 `define MUL_IDLE 0
 `define MUL_EXEC 1
 `define MUL_RET 2
+`endif
 /******************************************************************************************/
 module multiplier (
     input  wire        clk_i,
     input  wire        rst_i,
     input  wire        stall_i,
     input  wire        valid_i,
-    input  wire [ 3:0] mul_ctrl_i,
+    input  wire [`MUL_CTRL_WIDTH-1:0] mul_ctrl_i,
     input  wire [`XLEN-1:0] src1_i,
     input  wire [`XLEN-1:0] src2_i,
     output wire        stall_o,
     output wire [`XLEN-1:0] rslt_o
 );
+`ifdef RV64
+    parameter PIPE = 4; // Pipeline depth
 
+    wire w_mul         = mul_ctrl_i[`MUL_CTRL_IS_MUL];
+    wire w_src1_signed = mul_ctrl_i[`MUL_CTRL_IS_SRC1_SIGNED];
+    wire w_src2_signed = mul_ctrl_i[`MUL_CTRL_IS_SRC2_SIGNED];
+    wire w_is_high     = mul_ctrl_i[`MUL_CTRL_IS_HIGH];
+    wire w_is_w        = mul_ctrl_i[`MUL_CTRL_IS_W];
+
+    // Pre-process inputs (Sign/Zero extension for W instructions)
+    wire [`XLEN-1:0] a_op = w_is_w ? { {32{w_src1_signed & src1_i[31]}}, src1_i[31:0] } : src1_i;
+    wire [`XLEN-1:0] b_op = w_is_w ? { {32{w_src2_signed & src2_i[31]}}, src2_i[31:0] } : src2_i;
+
+    // Expand to 65 bits for signed multiplication
+    wire signed [`XLEN:0] mul_a = { w_src1_signed & a_op[(`XLEN-1)], a_op };
+    wire signed [`XLEN:0] mul_b = { w_src2_signed & b_op[(`XLEN-1)], b_op };
+
+    // Pipelined multiplier registers
+    (* srl_style = "register" *) reg signed [129:0] prod_pipe [PIPE-1:0];
+    reg [PIPE-1:0] is_w_pipe;
+    reg [PIPE-1:0] is_high_pipe;
+    
+    reg [3:0] count = 0;
+    integer i;
+
+    always @(posedge clk_i) begin
+        if (rst_i) begin
+            count <= 0;
+            is_w_pipe <= 0;
+            is_high_pipe <= 0;
+            for (i = 0; i < PIPE; i = i + 1) prod_pipe[i] <= 0;
+        end else if (!stall_i) begin
+            if (valid_i && w_mul && count == 0) begin
+                count <= PIPE;
+            end else if (count > 0) begin
+                count <= count - 1;
+            end
+
+            prod_pipe[0] <= mul_a * mul_b;
+            is_w_pipe    <= {is_w_pipe[PIPE-2:0], w_is_w};
+            is_high_pipe <= {is_high_pipe[PIPE-2:0], w_is_high};
+
+            for (i = 1; i < PIPE; i = i + 1) begin
+                prod_pipe[i] <= prod_pipe[i-1];
+            end
+        end
+    end
+
+    // stall_o is HIGH when we need to stall the CPU.
+    assign stall_o = (valid_i && w_mul && count == 0) || (count > 1);
+
+    // Output formatting
+    wire [129:0] product     = prod_pipe[PIPE-1];
+    wire         out_is_w    = is_w_pipe[PIPE-1];
+    wire         out_is_high = is_high_pipe[PIPE-1];
+    wire [31:0]  rslt_32     = product[31:0];
+
+    assign rslt_o = (count != 1) ? 0 : 
+                    (out_is_w) ? {{32{rslt_32[31]}}, rslt_32} :
+                    (out_is_high) ? product[2*`XLEN-1:`XLEN] : product[`XLEN-1:0];
+`else
     reg        [ 1:0] state = `MUL_IDLE;
     reg signed [`XLEN:0] r_multiplicand;  // XLEN+1 bit
     reg signed [`XLEN:0] r_multiplier;  // XLEN+1 bit
@@ -720,12 +847,13 @@ module multiplier (
         end
     end
     assign stall_o = (w_state != `MUL_IDLE);
+`endif
 endmodule
 
 /******************************************************************************************/
 module store_unit (
     input  wire        valid_i,
-    input  wire [ 5:0] lsu_ctrl_i,
+    input  wire [`LSU_CTRL_WIDTH-1:0] lsu_ctrl_i,
     input  wire [`XLEN-1:0] src1_i,
     input  wire [`XLEN-1:0] src2_i,
     input  wire [`XLEN-1:0] imm_i,
@@ -745,6 +873,13 @@ module store_unit (
     wire w_sh = lsu_ctrl_i[`LSU_CTRL_IS_HALFWORD];
     wire w_sw = lsu_ctrl_i[`LSU_CTRL_IS_WORD];
 
+`ifdef RV64
+    assign dbus_wdata_o = (w_sb) ? {8{src2_i[7:0]}} :
+                          (w_sh) ? {4{src2_i[15:0]}} :
+                          (w_sw) ? {2{src2_i[31:0]}} : src2_i[`XLEN-1:0];
+    wire [`XBYTES-1:0] mask = (w_sb) ? 1 : (w_sh) ? 3 : (w_sw) ? 15 : {`XBYTES{1'b1}};
+    assign dbus_wstrb_o = mask << dbus_offset_o;
+`else
     assign dbus_wdata_o[7:0]   = src2_i[7:0];
     assign dbus_wdata_o[15:8]  = (w_sb) ? src2_i[7:0] : src2_i[15:8];
     assign dbus_wdata_o[23:16] = (w_sw) ? src2_i[23:16] : src2_i[7:0];
@@ -754,11 +889,12 @@ module store_unit (
     assign dbus_wstrb_o[1] = (w_sb && dbus_offset_o==1) || (w_sh && dbus_offset_o[1]==0) || w_sw;
     assign dbus_wstrb_o[2] = (w_sb && dbus_offset_o==2) || (w_sh && dbus_offset_o[1]==1) || w_sw;
     assign dbus_wstrb_o[3] = (w_sb && dbus_offset_o==3) || (w_sh && dbus_offset_o[1]==1) || w_sw;
+`endif
 endmodule
 
 /******************************************************************************************/
 module load_unit (
-    input  wire [ 5:0] lsu_ctrl_i,
+    input  wire [`LSU_CTRL_WIDTH-1:0] lsu_ctrl_i,
     input  wire [`DBUS_OFFSET_W-1:0] dbus_offset_i,
     input  wire [`XLEN-1:0] dbus_rdata_i,
     output wire [`XLEN-1:0] rslt_o
@@ -769,6 +905,18 @@ module load_unit (
     wire w_lw = lsu_ctrl_i[`LSU_CTRL_IS_WORD];
     wire w_signed = lsu_ctrl_i[`LSU_CTRL_IS_SIGNED];
     wire w_load = lsu_ctrl_i[`LSU_CTRL_IS_LOAD];
+`ifdef RV64
+    wire [`XLEN-1:0] d_shifted = dbus_rdata_i >> {dbus_offset_i, 3'b0};
+    wire [7:0] b = d_shifted[7:0];
+    wire [15:0] h = d_shifted[15:0];
+    wire [31:0] w = d_shifted[31:0];
+
+    assign rslt_o = (!w_load) ? 0 :
+                    (w_lb) ? {{(`XLEN-8){w_signed & b[7]}}, b} :
+                    (w_lh) ? {{(`XLEN-16){w_signed & h[15]}}, h} :
+                    (w_lw) ? {{(`XLEN-32){w_signed & w[31]}}, w} :
+                    d_shifted;
+`else
     wire [`DBUS_OFFSET_W-1:0] ost = dbus_offset_i;  // offset
     wire [`XLEN-1:0] d = dbus_rdata_i;  // data
 
@@ -784,6 +932,7 @@ module load_unit (
     assign w3 = (w_load == 0) ? 0 : (w_lw) ? d[23:16] : ((w_lb_sign) || (w_lh_sign)) ? 8'hff : 0;
     assign w4 = (w_load == 0) ? 0 : (w_lw) ? d[31:24] : ((w_lb_sign) || (w_lh_sign)) ? 8'hff : 0;
     assign rslt_o = {w4, w3, w2, w1};
+`endif
 endmodule
 
 /******************************************************************************************/
@@ -806,7 +955,12 @@ module imm_gen (
     wire        imm11 = (i_ | s_) ? ir[31] : (b_) ? ir[7] : (j_) ? ir[20] : 0;
     wire [ 7:0] imm19_12 = (i_ | s_ | b_) ? {8{ir[31]}} : (u_ | j_) ? ir[19:12] : 0;
     wire [10:0] imm30_20 = (i_ | s_ | b_ | j_) ? {11{ir[31]}} : (u_) ? ir[30:20] : 0;
-    assign imm_o = {ir[31], imm30_20, imm19_12, imm11, imm10_5, imm4_1, imm0};
+    wire [31:0] imm32 = {ir[31], imm30_20, imm19_12, imm11, imm10_5, imm4_1, imm0};
+`ifdef RV64
+    assign imm_o = {{32{imm32[31]}}, imm32};
+`else
+    assign imm_o = imm32;
+`endif
 endmodule
 
 /******************************************************************************************/
@@ -829,7 +983,11 @@ module decoder (
     assign cfu_ctrl_o = (op == 5'b00010) ? {f7, f3, 1'b1} : 0;
 
     wire src2_c0 = (op == 5'b00101);  // AUIPC
+`ifdef RV64
+    wire src2_c1 = (op == 5'b01101) | (op == 5'b00100) | (op == 5'b00110);  // LUI, OP-IMM, OP-IMM-32
+`else
     wire src2_c1 = (op == 5'b01101) | (op == 5'b00100);  // LUI, OP-IMM
+`endif
     assign src2_ctrl_o = {src2_c1, src2_c0};
 
     wire bru_c0 = (op == 5'b11011) || (op == 5'b11001) || (op == 5'b11000);  // IS_CTRL_TSFR
@@ -847,35 +1005,71 @@ module decoder (
     wire lsu_c2 = (op == 0 && (f3 == 0 || f3 == 1 || f3 == 2));  // IS_SIGNED
     wire lsu_c3 = (op == 0 && (f3 == 0 || f3 == 4)) || (op == 8 && (f3 == 0));  // BYTE
     wire lsu_c4 = (op == 0 && (f3 == 1 || f3 == 5)) || (op == 8 && (f3 == 1));  // HALFWORD
+`ifdef RV64
+    wire lsu_c5 = (op == 0 && (f3 == 2 || f3 == 6)) || (op == 8 && (f3 == 2));  // WORD
+    wire lsu_c6 = (op == 0 && (f3 == 3)) || (op == 8 && (f3 == 3));  // DOUBLEWORD
+    assign lsu_ctrl_o = {lsu_c6, lsu_c5, lsu_c4, lsu_c3, lsu_c2, lsu_c1, lsu_c0};
+`else
     wire lsu_c5 = (op == 0 && (f3 == 2)) || (op == 8 && (f3 == 2));  // WORD
     assign lsu_ctrl_o = {lsu_c5, lsu_c4, lsu_c3, lsu_c2, lsu_c1, lsu_c0};
+`endif
 
+`ifdef RV64
+    wire mul_c0 = ((op == 12) && (f7 == 1) && (f3 == 0 || f3 == 1 || f3 == 2 || f3 == 3)) ||
+                  ((op == 14) && (f7 == 1) && (f3 == 0));  // IS_MUL
+`else
     wire mul_c0 = (op == 12) && (f7 == 1) && (f3 == 0 || f3 == 1 || f3 == 2 || f3 == 3);  // IS_MUL
+`endif
     wire mul_c1 = (op == 12) && (f7 == 1) && (f3 == 1 || f3 == 2);  // IS_SRC1_SIGNED
     wire mul_c2 = (op == 12) && (f7 == 1) && (f3 == 1);  // IS_SRC2_SIGNED
     wire mul_c3 = (op == 12) && (f7 == 1) && (f3 == 1 || f3 == 2 || f3 == 3);  // IS_HIGH
+`ifdef RV64
+    wire mul_c4 = (op == 14) && (f7 == 1) && (f3 == 0); // IS_W
+    assign mul_ctrl_o = {mul_c4, mul_c3, mul_c2, mul_c1, mul_c0};
+`else
     assign mul_ctrl_o = {mul_c3, mul_c2, mul_c1, mul_c0};
+`endif
 
+`ifdef RV64
+    wire div_c0 = ((op == 12) || (op == 14)) && (f7 == 1) && (f3 == 4 || f3 == 5 || f3 == 6 || f3 == 7);  // IS_DIV
+    wire div_c1 = ((op == 12) || (op == 14)) && (f7 == 1) && (f3 == 4 || f3 == 6);  // IS_SIGNED
+    wire div_c2 = ((op == 12) || (op == 14)) && (f7 == 1) && (f3 == 6 || f3 == 7);  // IS_REM
+    wire div_c3 = (op == 14) && (f7 == 1) && (f3 == 4 || f3 == 5 || f3 == 6 || f3 == 7); // IS_W
+    assign div_ctrl_o = {div_c3, div_c2, div_c1, div_c0};
+`else
     wire div_c0 = (op == 12) && (f7 == 1) && (f3 == 4 || f3 == 5 || f3 == 6 || f3 == 7);  // IS_DIV
     wire div_c1 = (op == 12) && (f7 == 1) && (f3 == 4 || f3 == 6);  // IS_SIGNED
     wire div_c2 = (op == 12) && (f7 == 1) && (f3 == 6 || f3 == 7);  // IS_REM
     assign div_ctrl_o = {div_c2, div_c1, div_c0};
+`endif
 
     wire [9:0] f10 = {f7, f3};
-    wire alu_c0 = (op==4 && f3==2) || (op==4 && f3==5 && f7==7'b0100000) ||
-                  (op==5'b01100 && (f10==10'b10 || f10==10'b0100000101)); // IS_SIGNED
-    wire alu_c1 = (op==4 && (f3==2 || f3==3)) || (op==5'b01100 &&
+`ifdef RV64
+    wire is_op_imm = (op == 5'b00100) || (op == 5'b00110); // OP-IMM, OP-IMM-32
+    wire is_op     = (op == 5'b01100) || (op == 5'b01110); // OP, OP-32
+`else
+    wire is_op_imm = (op == 5'b00100);
+    wire is_op     = (op == 5'b01100);
+`endif
+    wire alu_c0 = (is_op_imm && f3==2) || (is_op_imm && f3==5 && f7==7'b0100000) ||
+                  (is_op && (f10==10'b10 || f10==10'b0100000101)); // IS_SIGNED
+    wire alu_c1 = (is_op_imm && (f3==2 || f3==3)) || (is_op &&
                   (f10==10'b100000000 || f10==10'b10 || f10==10'b11)); // IS_NEG
-    wire alu_c2 = (op==4 && (f3==2 || f3==3)) ||
-                  (op==5'b01100 && (f10==10'b10 || f10==10'b11)); // IS_LESS
-    wire alu_c3 = (op==4 && f3==0) ||
-                  (op==5'b01100 && (f10==10'b0 || f10==10'b100000000)); // IS_ADD
-    wire alu_c4 = (op == 4 && f3 == 1 && f7 == 7'b0) || (op == 12 && f10 == 1);  // IS_SHIFT_LEFT
-    wire alu_c5 = (op==4 && f3==5 && (f7==7'b0 || f7==7'b100000)) || (op==12 &&
+    wire alu_c2 = (is_op_imm && (f3==2 || f3==3)) ||
+                  (is_op && (f10==10'b10 || f10==10'b11)); // IS_LESS
+    wire alu_c3 = (is_op_imm && f3==0) ||
+                  (is_op && (f10==10'b0 || f10==10'b100000000)); // IS_ADD
+    wire alu_c4 = (is_op_imm && f3 == 1 && f7[6:1] == 6'b0) || (is_op && f10 == 1);  // IS_SHIFT_LEFT
+    wire alu_c5 = (is_op_imm && f3==5 && (f7[6:1]==6'b0 || f7[6:1]==6'b010000)) || (is_op &&
                   (f10==10'b101 || f10==10'b0100000101)); // IS_SHIFT_RIGHT
-    wire alu_c6 = (op==4 && (f3==4 || f3==6)) || (op==12 && (f10==4 || f10==6));//IS_XOR_OR
-    wire alu_c7 = (op==4 && (f3==6 || f3==7)) || (op==12 && (f10==6 || f10==7));//IS_OR_AND
+    wire alu_c6 = (is_op_imm && (f3==4 || f3==6)) || (is_op && (f10==4 || f10==6));//IS_XOR_OR
+    wire alu_c7 = (is_op_imm && (f3==6 || f3==7)) || (is_op && (f10==6 || f10==7));//IS_OR_AND
     wire alu_c8 = (op == 5'b01101 || op == 5'b00101);  // IS_SRC2
+`ifdef RV64
+    wire alu_c9 = (op == 5'b00110 || op == 5'b01110);  // IS_W
+    assign alu_ctrl_o = {alu_c9, alu_c8, alu_c7, alu_c6, alu_c5, alu_c4, alu_c3, alu_c2, alu_c1, alu_c0};
+`else
     assign alu_ctrl_o = {alu_c8, alu_c7, alu_c6, alu_c5, alu_c4, alu_c3, alu_c2, alu_c1, alu_c0};
+`endif
 endmodule
 /******************************************************************************************/
