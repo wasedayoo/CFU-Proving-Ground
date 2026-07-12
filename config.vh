@@ -11,7 +11,7 @@
 `define LCD_ROTATE 0 // 0: 0 degree, 1: 90 degree, 2: 180 degree, 3: 270 degree (Left Rotate)
 
 // cpu
-`define CLK_FREQ_MHZ 160  // operating clock frequency in MHz
+`define CLK_FREQ_MHZ 130  // operating clock frequency in MHz
 
 `define RESET_VECTOR 'h00000000
 
@@ -40,7 +40,7 @@
 `define TOHOST_ADDR 'h40008000 // do not modify, this is hard coded in the interconnect
 
 // cpu
- `define RV64
+`define RV64
 
 `ifdef RV64
 `define XLEN 64
