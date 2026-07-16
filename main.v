@@ -39,7 +39,7 @@ module main (
     reg rdata_sel = 0;
     always @(posedge clk) rdata_sel <= dbus_addr[30];
 `ifdef RV64
-    assign dbus_rdata = (rdata_sel) ? {2{perf_rdata[31:0]}} : dmem_rdata;
+    assign dbus_rdata = (rdata_sel) ? {2{perf_rdata}} : dmem_rdata;
 `else
     assign dbus_rdata = (rdata_sel) ? perf_rdata : dmem_rdata;
 `endif
@@ -97,7 +97,7 @@ module main (
     wire        perf_we    = dbus_we & (dbus_addr[30]);
     wire  [3:0] perf_addr  = dbus_addr[3:0];
     wire  [2:0] perf_wdata = dbus_wdata[2:0];
-    wire [`XLEN-1:0] perf_rdata;
+    wire [31:0] perf_rdata;
     perf_cntr perf (
         .clk_i   (clk),         // input  wire
         .addr_i  (perf_addr),   // input  wire [3:0]
