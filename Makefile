@@ -47,12 +47,9 @@ dmem_size =	$(shell grep -oP "\`define\s+DMEM_SIZE\s+\(\K[^)]*" config.vh | bc)
 
 
 ifeq ($(strip $(IS_RV64)),1)
-# =========================================================================
-# 64-bit version
-# =========================================================================
 prog:
-	mkdir -p buildS
-	$(GCC) -Os -march=rv64im -mabi=lp64 -mcmodel=medany -nostartfiles -Iapp -Tapp/link.ld -o build/main.elf app/crt0.s app/*.c *.c
+	mkdir -p build
+	$(GCC) -Os -march=rv64im -mabi=lp64 -nostartfiles -Iapp -Tapp/link.ld -o build/main.elf app/crt0.s app/*.c *.c
 	make initf
 
 initf:
@@ -88,9 +85,6 @@ initf:
 		IFS=$$tmp_IFS; \
 	done
 else
-# =========================================================================
-# 32-bit version
-# =========================================================================
 prog:
 	mkdir -p build
 	$(GCC) -Os -march=rv32im -mabi=ilp32 -nostartfiles -Iapp -Tapp/link.ld -o build/main.elf app/crt0.s app/*.c *.c
