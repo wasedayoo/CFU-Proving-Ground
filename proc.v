@@ -245,7 +245,7 @@ module cpu (
     // source select
     wire [`XLEN-1:0] Id_src1 = (Id_rs1_fwd_Wb_to_Ex) ? Ma_rslt : Id_xrs1;
     wire [`XLEN-1:0] Id_src2 = (Id_rs2_fwd_Wb_to_Ex) ? Ma_rslt :
-                               (Id_use_imm) ? Id_pc_in+Id_imm  : Id_xrs2 ;
+                               (Id_use_imm) ? Id_pc_in+Id_imm  : Id_xrs2;
 
     wire [`XLEN-1:0] Id_j_pc4 = (Id_bru_ctrl[`BRU_CTRL_IS_JAL_JALR]) ? IfId_pc + 4 : 0;
 

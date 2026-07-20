@@ -206,7 +206,7 @@ void pg_lcd_printd(long long x) {
         _pg_lcd_update_pos();
         x = -x;
     }
-    char buf[16];
+    char buf[19];
     int i = 0;
     while (x) {
         buf[i++] = x % 10 + '0';

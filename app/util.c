@@ -2,11 +2,11 @@
 / Released under the MIT license https://opensource.org/licenses/mit           */
 
 void pg_exit() {
-    *(int *)0x80000000UL = 0x00020000;
+    *(volatile int *)0x80000000UL = 0x00020000;
 }
 
 void pg_printc(char c) {
-    *(char *)0x80000000UL = c;
+    *(volatile char *)0x80000000UL = c;
 }
 
 void pg_printd(long long x) {
@@ -18,7 +18,7 @@ void pg_printd(long long x) {
         pg_printc('-');
         x = -x;
     }
-    char buf[16];
+    char buf[19];
     int i = 0;
     while (x) {
         buf[i++] = x % 10 + '0';
@@ -29,7 +29,7 @@ void pg_printd(long long x) {
     }
 }
 
-void pg_printh(unsigned long x) {
+void pg_printh(unsigned int x) {
     char buf[16];
     int i = 0;
     while (x) {
