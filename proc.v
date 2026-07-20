@@ -239,13 +239,13 @@ module cpu (
     wire Id_rs1_fwd_Wb_to_Ex = ExMa_v && ExMa_rf_we && (ExMa_rd == IfId_rs1);
     wire Id_rs2_fwd_Wb_to_Ex = ExMa_v && ExMa_rf_we && (ExMa_rd == IfId_rs2);
 
-    wire [`XLEN-1:0] Id_pc_in = (Id_src2_ctrl[`SRC2_CTRL_USE_AUIPC]) ? IfId_pc : 0;
     wire Id_use_imm = Id_src2_ctrl[`SRC2_CTRL_USE_AUIPC] | Id_src2_ctrl[`SRC2_CTRL_USE_IMM];
 
     // source select
-    wire [`XLEN-1:0] Id_src1 = (Id_rs1_fwd_Wb_to_Ex) ? Ma_rslt : Id_xrs1;
+    wire [`XLEN-1:0] Id_src1 = (Id_src2_ctrl[`SRC2_CTRL_USE_AUIPC]) ? IfId_pc :
+                               (Id_rs1_fwd_Wb_to_Ex) ? Ma_rslt : Id_xrs1;
     wire [`XLEN-1:0] Id_src2 = (Id_rs2_fwd_Wb_to_Ex) ? Ma_rslt :
-                               (Id_use_imm) ? Id_pc_in+Id_imm  : Id_xrs2;
+                               (Id_use_imm) ? Id_imm : Id_xrs2;
 
     wire [`XLEN-1:0] Id_j_pc4 = (Id_bru_ctrl[`BRU_CTRL_IS_JAL_JALR]) ? IfId_pc + 4 : 0;
 
@@ -588,10 +588,10 @@ module alu (
                                      (src1_i ^ src2_i) : 0) |
                                      ((alu_ctrl_i[`ALU_CTRL_IS_OR_AND])
                                       ? (src1_i & src2_i) : 0);
-    wire [`XLEN-1:0] lui_auipc_rslt     = (alu_ctrl_i[`ALU_CTRL_IS_SRC2]) ? src2_i : 0;
+    wire [`XLEN-1:0] lui_rslt     = (alu_ctrl_i[`ALU_CTRL_IS_SRC2]) ? src2_i : 0;
 
     wire [`XLEN-1:0] rslt_t = less_rslt | adder_rslt | left_shifter_rslt | right_shifter_rslt |
-                              bitwise_rslt | lui_auipc_rslt | j_pc4_i;
+                              bitwise_rslt | lui_rslt | j_pc4_i;
 
 `ifdef RV64
     assign rslt_o = w_is_w ? {{32{rslt_t[31]}}, rslt_t[31:0]} : rslt_t;
@@ -1057,14 +1057,14 @@ module decoder (
                   (f10==10'b100000000 || f10==10'b10 || f10==10'b11)); // IS_NEG
     wire alu_c2 = (is_op_imm && (f3==2 || f3==3)) ||
                   (is_op && (f10==10'b10 || f10==10'b11)); // IS_LESS
-    wire alu_c3 = (is_op_imm && f3==0) ||
+    wire alu_c3 = (op == 5'b00101) || (is_op_imm && f3==0) ||
                   (is_op && (f10==10'b0 || f10==10'b100000000)); // IS_ADD
     wire alu_c4 = (is_op_imm && f3 == 1 && f7[6:1] == 6'b0) || (is_op && f10 == 1);  // IS_SHIFT_LEFT
     wire alu_c5 = (is_op_imm && f3==5 && (f7[6:1]==6'b0 || f7[6:1]==6'b010000)) || (is_op &&
                   (f10==10'b101 || f10==10'b0100000101)); // IS_SHIFT_RIGHT
     wire alu_c6 = (is_op_imm && (f3==4 || f3==6)) || (is_op && (f10==4 || f10==6));//IS_XOR_OR
     wire alu_c7 = (is_op_imm && (f3==6 || f3==7)) || (is_op && (f10==6 || f10==7));//IS_OR_AND
-    wire alu_c8 = (op == 5'b01101 || op == 5'b00101);  // IS_SRC2
+    wire alu_c8 = (op == 5'b01101);  // IS_SRC2
 `ifdef RV64
     wire alu_c9 = (op == 5'b00110 || op == 5'b01110);  // IS_W
     assign alu_ctrl_o = {alu_c9, alu_c8, alu_c7, alu_c6, alu_c5, alu_c4, alu_c3, alu_c2, alu_c1, alu_c0};
