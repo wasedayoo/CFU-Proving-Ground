@@ -736,12 +736,14 @@ module divider (
 endmodule
 
 `ifdef RV64
-`define MUL_IDLE   0
-`define MUL_EXEC_0 1
-`define MUL_EXEC_1 2
-`define MUL_EXEC_2 3
-`define MUL_EXEC_3 4
-`define MUL_RET    5
+`define MUL_IDLE    0
+`define MUL_PARTIAL 1
+`define MUL_PAIR    2
+`define MUL_ROW     3
+`define MUL_SUM     4
+`define MUL_PRODUCT 5
+`define MUL_FORMAT  6
+`define MUL_RET     7
 `else
 `define MUL_IDLE 0
 `define MUL_EXEC 1
@@ -760,65 +762,105 @@ module multiplier (
     output wire [`XLEN-1:0] rslt_o
 );
 `ifdef RV64
-    parameter PIPE = 4; // Pipeline depth
+    reg [2:0] state = `MUL_IDLE;
+    reg [63:0] multiplicand;
+    reg [63:0] multiplier;
+    reg [31:0] partial [0:15];
+    reg [47:0] pair [0:7];
+    reg [79:0] row [0:3];
+    reg [95:0] sum [0:1];
+    reg [127:0] product;
+    reg [63:0] correction;
+    reg [63:0] result;
+    reg is_high;
+    reg is_w;
 
-    wire w_mul         = mul_ctrl_i[`MUL_CTRL_IS_MUL];
+    assign rslt_o = (state == `MUL_RET) ? result : 0;
+
+    wire w_mul = mul_ctrl_i[`MUL_CTRL_IS_MUL];
     wire w_src1_signed = mul_ctrl_i[`MUL_CTRL_IS_SRC1_SIGNED];
     wire w_src2_signed = mul_ctrl_i[`MUL_CTRL_IS_SRC2_SIGNED];
-    wire w_is_high     = mul_ctrl_i[`MUL_CTRL_IS_HIGH];
-    wire w_is_w        = mul_ctrl_i[`MUL_CTRL_IS_W];
-
-    // Pre-process inputs (Sign/Zero extension for W instructions)
-    wire [`XLEN-1:0] a_op = w_is_w ? { {32{w_src1_signed & src1_i[31]}}, src1_i[31:0] } : src1_i;
-    wire [`XLEN-1:0] b_op = w_is_w ? { {32{w_src2_signed & src2_i[31]}}, src2_i[31:0] } : src2_i;
-
-    // Expand to 65 bits for signed multiplication
-    wire signed [`XLEN:0] mul_a = { w_src1_signed & a_op[(`XLEN-1)], a_op };
-    wire signed [`XLEN:0] mul_b = { w_src2_signed & b_op[(`XLEN-1)], b_op };
-
-    // Pipelined multiplier registers
-    (* srl_style = "register" *) reg signed [129:0] prod_pipe [PIPE-1:0];
-    reg [PIPE-1:0] is_w_pipe;
-    reg [PIPE-1:0] is_high_pipe;
-    
-    reg [3:0] count = 0;
-    integer i;
+    wire w_is_high = mul_ctrl_i[`MUL_CTRL_IS_HIGH];
+    wire w_is_w = mul_ctrl_i[`MUL_CTRL_IS_W];
+    wire [2:0] w_state = (state == `MUL_IDLE && valid_i && w_mul) ? `MUL_PARTIAL :
+                         (state == `MUL_PARTIAL) ? `MUL_PAIR :
+                         (state == `MUL_PAIR) ? `MUL_ROW :
+                         (state == `MUL_ROW) ? `MUL_SUM :
+                         (state == `MUL_SUM) ? `MUL_PRODUCT :
+                         (state == `MUL_PRODUCT) ? `MUL_FORMAT :
+                         (state == `MUL_FORMAT) ? `MUL_RET : `MUL_IDLE;
 
     always @(posedge clk_i) begin
         if (rst_i) begin
-            count <= 0;
-            is_w_pipe <= 0;
-            is_high_pipe <= 0;
-            for (i = 0; i < PIPE; i = i + 1) prod_pipe[i] <= 0;
+            state <= `MUL_IDLE;
         end else if (!stall_i) begin
-            if (valid_i && w_mul && count == 0) begin
-                count <= PIPE;
-            end else if (count > 0) begin
-                count <= count - 1;
+            if (state == `MUL_IDLE && valid_i && w_mul) begin
+                multiplicand <= src1_i;
+                multiplier <= src2_i;
+                correction <= ((w_src1_signed && src1_i[63]) ? src2_i : 64'b0) +
+                              ((w_src2_signed && src2_i[63]) ? src1_i : 64'b0);
+                is_high <= w_is_high;
+                is_w <= w_is_w;
             end
 
-            prod_pipe[0] <= mul_a * mul_b;
-            is_w_pipe    <= {is_w_pipe[PIPE-2:0], w_is_w};
-            is_high_pipe <= {is_high_pipe[PIPE-2:0], w_is_high};
-
-            for (i = 1; i < PIPE; i = i + 1) begin
-                prod_pipe[i] <= prod_pipe[i-1];
+            if (state == `MUL_PARTIAL) begin
+                partial[ 0] <= multiplicand[15: 0] * multiplier[15: 0];
+                partial[ 1] <= multiplicand[15: 0] * multiplier[31:16];
+                partial[ 2] <= multiplicand[15: 0] * multiplier[47:32];
+                partial[ 3] <= multiplicand[15: 0] * multiplier[63:48];
+                partial[ 4] <= multiplicand[31:16] * multiplier[15: 0];
+                partial[ 5] <= multiplicand[31:16] * multiplier[31:16];
+                partial[ 6] <= multiplicand[31:16] * multiplier[47:32];
+                partial[ 7] <= multiplicand[31:16] * multiplier[63:48];
+                partial[ 8] <= multiplicand[47:32] * multiplier[15: 0];
+                partial[ 9] <= multiplicand[47:32] * multiplier[31:16];
+                partial[10] <= multiplicand[47:32] * multiplier[47:32];
+                partial[11] <= multiplicand[47:32] * multiplier[63:48];
+                partial[12] <= multiplicand[63:48] * multiplier[15: 0];
+                partial[13] <= multiplicand[63:48] * multiplier[31:16];
+                partial[14] <= multiplicand[63:48] * multiplier[47:32];
+                partial[15] <= multiplicand[63:48] * multiplier[63:48];
             end
+
+            if (state == `MUL_PAIR) begin
+                pair[0] <= {16'b0, partial[ 0]} + {partial[ 1], 16'b0};
+                pair[1] <= {16'b0, partial[ 2]} + {partial[ 3], 16'b0};
+                pair[2] <= {16'b0, partial[ 4]} + {partial[ 5], 16'b0};
+                pair[3] <= {16'b0, partial[ 6]} + {partial[ 7], 16'b0};
+                pair[4] <= {16'b0, partial[ 8]} + {partial[ 9], 16'b0};
+                pair[5] <= {16'b0, partial[10]} + {partial[11], 16'b0};
+                pair[6] <= {16'b0, partial[12]} + {partial[13], 16'b0};
+                pair[7] <= {16'b0, partial[14]} + {partial[15], 16'b0};
+            end
+
+            if (state == `MUL_ROW) begin
+                row[0] <= {32'b0, pair[0]} + {pair[1], 32'b0};
+                row[1] <= {32'b0, pair[2]} + {pair[3], 32'b0};
+                row[2] <= {32'b0, pair[4]} + {pair[5], 32'b0};
+                row[3] <= {32'b0, pair[6]} + {pair[7], 32'b0};
+            end
+
+            if (state == `MUL_SUM) begin
+                sum[0] <= {16'b0, row[0]} + {row[1], 16'b0};
+                sum[1] <= {16'b0, row[2]} + {row[3], 16'b0};
+            end
+
+            if (state == `MUL_PRODUCT)
+                product <= {32'b0, sum[0]} + {sum[1], 32'b0};
+
+            if (state == `MUL_FORMAT) begin
+                if (is_w)
+                    result <= {{32{product[31]}}, product[31:0]};
+                else if (is_high)
+                    result <= product[127:64] - correction;
+                else
+                    result <= product[63:0];
+            end
+
+            state <= w_state;
         end
     end
-
-    // stall_o is HIGH when we need to stall the CPU.
-    assign stall_o = (valid_i && w_mul && count == 0) || (count > 1);
-
-    // Output formatting
-    wire [129:0] product     = prod_pipe[PIPE-1];
-    wire         out_is_w    = is_w_pipe[PIPE-1];
-    wire         out_is_high = is_high_pipe[PIPE-1];
-    wire [31:0]  rslt_32     = product[31:0];
-
-    assign rslt_o = (count != 1) ? 0 : 
-                    (out_is_w) ? {{32{rslt_32[31]}}, rslt_32} :
-                    (out_is_high) ? product[2*`XLEN-1:`XLEN] : product[`XLEN-1:0];
+    assign stall_o = (w_state != `MUL_IDLE);
 `else
     reg        [ 1:0] state = `MUL_IDLE;
     reg signed [`XLEN:0] r_multiplicand;  // XLEN+1 bit
