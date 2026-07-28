@@ -848,7 +848,7 @@ module multiplier (
     reg signed        [         `XLEN:0] r_multiplicand;  // XLEN+1 bit
     reg signed        [         `XLEN:0] r_multiplier;  // XLEN+1 bit
     reg               [2 * `XLEN-1:0] product;  // 2*XLEN bit
-    reg                              is_high;  //
+    reg                              is_high;  
 
     assign rslt_o = (state != MUL_RET) ? 0 :
                     is_high ? product[2 * `XLEN-1:`XLEN] : product[`XLEN-1:0];
