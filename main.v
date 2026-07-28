@@ -38,11 +38,7 @@ module main (
 
     reg rdata_sel = 0;
     always @(posedge clk) rdata_sel <= dbus_addr[30];
-`ifdef RV64
-    assign dbus_rdata = (rdata_sel) ? {2{perf_rdata}} : dmem_rdata;
-`else
-    assign dbus_rdata = (rdata_sel) ? perf_rdata : dmem_rdata;
-`endif
+    assign dbus_rdata = rdata_sel ? {(`XLEN / 32){perf_rdata}} : dmem_rdata;
 
     cpu cpu (
         .clk_i         (clk),         // input  wire
@@ -63,11 +59,11 @@ module main (
         .rdata_o (imem_rdata)   // output reg  [DATA_WIDTH-1:0]
     );
 
-    wire [`XLEN-1:0] dmem_addr  = dbus_addr;
-    wire [`XLEN-1:0] dmem_wdata = dbus_wdata;
-    wire  [`XBYTES-1:0] dmem_wstrb = dbus_wstrb;
-    wire        dmem_re    = !dbus_we & (dbus_addr[28]);
-    wire        dmem_we    =  dbus_we & (dbus_addr[28]);
+    wire [ `XLEN-1:0] dmem_addr = dbus_addr;
+    wire [ `XLEN-1:0] dmem_wdata = dbus_wdata;
+    wire [`XBYTES-1:0] dmem_wstrb = dbus_wstrb;
+    wire               dmem_re = !dbus_we & dbus_addr[28];
+    wire               dmem_we = dbus_we & dbus_addr[28];
     wire [`XLEN-1:0] dmem_rdata;
     m_dmem dmem (
         .clk_i   (clk),         // input  wire
@@ -79,7 +75,9 @@ module main (
         .rdata_o (dmem_rdata)   // output reg  [DATA_WIDTH-1:0]
     );
 
+`ifndef SYNTHESIS
     always @(posedge clk) if (dbus_we) $display("WE: addr=%x data=%x", dbus_addr, dbus_wdata);
+`endif
     wire        vmem_we    = dbus_we & (dbus_addr[29]);
     wire [15:0] vmem_addr  = dbus_addr[15:0];
     wire  [2:0] vmem_wdata = dbus_wdata[2:0];
@@ -154,18 +152,14 @@ module m_dmem (
     wire [`DMEM_ADDRW-1:0] valid_addr = addr_i[`DMEM_ADDRW+(BYTE_OFFSET-1):BYTE_OFFSET];
 
     reg [`XLEN-1:0] rdata = 0;
+    integer byte_index;
     always @(posedge clk_i) begin
         if (we_i) begin
-            if (wstrb_i[0]) dmem[valid_addr][7:0]   <= wdata_i[7:0];
-            if (wstrb_i[1]) dmem[valid_addr][15:8]  <= wdata_i[15:8];
-            if (wstrb_i[2]) dmem[valid_addr][23:16] <= wdata_i[23:16];
-            if (wstrb_i[3]) dmem[valid_addr][31:24] <= wdata_i[31:24];
-`ifdef RV64
-            if (wstrb_i[4]) dmem[valid_addr][39:32] <= wdata_i[39:32];
-            if (wstrb_i[5]) dmem[valid_addr][47:40] <= wdata_i[47:40];
-            if (wstrb_i[6]) dmem[valid_addr][55:48] <= wdata_i[55:48];
-            if (wstrb_i[7]) dmem[valid_addr][63:56] <= wdata_i[63:56];
-`endif
+            for (byte_index = 0; byte_index < `XBYTES; byte_index = byte_index + 1) begin
+                if (wstrb_i[byte_index]) begin
+                    dmem[valid_addr][byte_index * 8 +: 8] <= wdata_i[byte_index * 8 +: 8];
+                end
+            end
         end
         if (re_i) rdata <= dmem[valid_addr];
     end
