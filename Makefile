@@ -16,8 +16,8 @@ GPP     := /var/archlab-modules/riscv-gnu-toolchain/2026.03.13/bin/riscv64-unkno
 OBJCOPY := /var/archlab-modules/riscv-gnu-toolchain/2026.03.13/bin/riscv64-unknown-elf-objcopy
 OBJDUMP := /var/archlab-modules/riscv-gnu-toolchain/2026.03.13/bin/riscv64-unknown-elf-objdump
 endif
-VIVADO  := /var/archlab-modules/amd/2025.2/Vivado/bin/vivado
-VPP     := /var/archlab-modules/amd/2025.2/Vitis/bin/v++
+VIVADO  := /var/archlab-modules/amd/2025.2.1/Vivado/bin/vivado
+VPP     := /var/archlab-modules/amd/2025.2.1/Vitis/bin/v++
 RTLSIM  := /var/archlab-modules/verilator/5.046/bin/verilator
 
 TARGET := arty_a7
