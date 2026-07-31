@@ -6,13 +6,13 @@
 `ifndef USE_HLS
 
 module cfu (
-    input  wire        clk_i,
-    input  wire        en_i,
-    input  wire [ 2:0] funct3_i,
-    input  wire [ 6:0] funct7_i,
+    input  wire             clk_i,
+    input  wire             en_i,
+    input  wire [      2:0] funct3_i,
+    input  wire [      6:0] funct7_i,
     input  wire [`XLEN-1:0] src1_i,
     input  wire [`XLEN-1:0] src2_i,
-    output wire        stall_o,
+    output wire             stall_o,
     output wire [`XLEN-1:0] rslt_o
 );
     assign stall_o = 0;
@@ -22,13 +22,13 @@ endmodule
 `else
 
 module cfu (
-    input  wire        clk_i,
-    input  wire        en_i,
-    input  wire [ 2:0] funct3_i,
-    input  wire [ 6:0] funct7_i,
+    input  wire             clk_i,
+    input  wire             en_i,
+    input  wire [      2:0] funct3_i,
+    input  wire [      6:0] funct7_i,
     input  wire [`XLEN-1:0] src1_i,
     input  wire [`XLEN-1:0] src2_i,
-    output wire        stall_o,
+    output wire             stall_o,
     output wire [`XLEN-1:0] rslt_o
 );
 

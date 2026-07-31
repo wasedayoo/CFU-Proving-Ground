@@ -59,12 +59,12 @@ module main (
         .rdata_o (imem_rdata)   // output reg  [DATA_WIDTH-1:0]
     );
 
-    wire [ `XLEN-1:0] dmem_addr = dbus_addr;
-    wire [ `XLEN-1:0] dmem_wdata = dbus_wdata;
+    wire [  `XLEN-1:0] dmem_addr = dbus_addr;
+    wire [  `XLEN-1:0] dmem_wdata = dbus_wdata;
     wire [`XBYTES-1:0] dmem_wstrb = dbus_wstrb;
     wire               dmem_re = !dbus_we & dbus_addr[28];
     wire               dmem_we = dbus_we & dbus_addr[28];
-    wire [`XLEN-1:0] dmem_rdata;
+    wire [  `XLEN-1:0] dmem_rdata;
     m_dmem dmem (
         .clk_i   (clk),         // input  wire
         .we_i    (dmem_we),     // input  wire

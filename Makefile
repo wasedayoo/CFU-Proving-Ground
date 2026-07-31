@@ -54,7 +54,7 @@ prog:
 
 INITF_DMEM_HEX_FMT := 1/8 "%016x\n"
 INITF_DMEM_PREFIX := 64'h
-INITF_HEX_SUFFIX := .hex
+INITF_HEX_SUFFIX := .64.hex
 else
 prog:
 	mkdir -p build
