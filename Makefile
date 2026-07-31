@@ -16,8 +16,8 @@ GPP     := /var/archlab-modules/riscv-gnu-toolchain/2026.03.13/bin/riscv64-unkno
 OBJCOPY := /var/archlab-modules/riscv-gnu-toolchain/2026.03.13/bin/riscv64-unknown-elf-objcopy
 OBJDUMP := /var/archlab-modules/riscv-gnu-toolchain/2026.03.13/bin/riscv64-unknown-elf-objdump
 endif
-VIVADO  := /var/archlab-modules/amd/2025.2/Vivado/bin/vivado
-VPP     := /var/archlab-modules/amd/2025.2/Vitis/bin/v++
+VIVADO  := /var/archlab-modules/amd/2025.2.1/Vivado/bin/vivado
+VPP     := /var/archlab-modules/amd/2025.2.1/Vitis/bin/v++
 RTLSIM  := /var/archlab-modules/verilator/5.046/bin/verilator
 
 TARGET := arty_a7
@@ -52,6 +52,20 @@ prog:
 	$(GCC) -Os -march=rv64im -mabi=lp64 -nostartfiles -Iapp -Tapp/link.ld -o build/main.elf app/crt0.s app/*.c *.c
 	make initf
 
+INITF_DMEM_HEX_FMT := 1/8 "%016x\n"
+INITF_DMEM_PREFIX := 64'h
+INITF_HEX_SUFFIX := .64.hex
+else
+prog:
+	mkdir -p build
+	$(GCC) -Os -march=rv32im -mabi=ilp32 -nostartfiles -Iapp -Tapp/link.ld -o build/main.elf app/crt0.s app/*.c *.c
+	make initf
+
+INITF_DMEM_HEX_FMT := 1/4 "%08x\n"
+INITF_DMEM_PREFIX := 32'h
+INITF_HEX_SUFFIX := .32.hex
+endif
+
 initf:
 	$(OBJDUMP) -D build/main.elf > build/main.dump
 	$(OBJCOPY) -O binary --only-section=.text build/main.elf build/memi.bin.tmp; \
@@ -66,12 +80,12 @@ initf:
 			v_prefix="32'h"; \
 		else \
 			mem_size=$(dmem_size); \
-			hex_fmt='1/8 "%016x\n"'; \
-			v_prefix="64'h"; \
+			hex_fmt='$(INITF_DMEM_HEX_FMT)'; \
+			v_prefix="$(INITF_DMEM_PREFIX)"; \
 		fi; \
 		dd if=build/mem$$suf.bin.tmp of=build/mem$$suf.bin conv=sync bs=$$mem_size; \
 		rm -f build/mem$$suf.bin.tmp; \
-		hexdump -v -e "$$hex_fmt" build/mem$$suf.bin > build/mem$$suf.hex; \
+		hexdump -v -e "$$hex_fmt" build/mem$$suf.bin > build/mem$$suf$(INITF_HEX_SUFFIX); \
 		tmp_IFS=$$IFS; IFS= ; \
 		cnt=0; \
 		{ \
@@ -79,46 +93,11 @@ initf:
 			while read -r line; do \
 				echo "    $${suf}mem[$$cnt] = $${v_prefix}$$line;"; \
 				cnt=$$((cnt + 1)); \
-			done < build/mem$$suf.hex; \
+			done < build/mem$$suf$(INITF_HEX_SUFFIX); \
 			echo "end"; \
 		} > mem$$suf.txt; \
 		IFS=$$tmp_IFS; \
 	done
-else
-prog:
-	mkdir -p build
-	$(GCC) -Os -march=rv32im -mabi=ilp32 -nostartfiles -Iapp -Tapp/link.ld -o build/main.elf app/crt0.s app/*.c *.c
-	make initf
-
-initf:
-	$(OBJDUMP) -D build/main.elf > build/main.dump
-	$(OBJCOPY) -O binary --only-section=.text build/main.elf build/memi.bin.tmp; \
-	$(OBJCOPY) -O binary --only-section=.data \
-						 --only-section=.rodata \
-						 --only-section=.bss \
-						 build/main.elf build/memd.bin.tmp; \
-	for suf in i d; do \
-		if [ "$$suf" = "i" ]; then \
-			mem_size=$(imem_size); \
-		else \
-			mem_size=$(dmem_size); \
-		fi; \
-		dd if=build/mem$$suf.bin.tmp of=build/mem$$suf.bin conv=sync bs=$$mem_size; \
-		rm -f build/mem$$suf.bin.tmp; \
-		hexdump -v -e '1/4 "%08x\n"' build/mem$$suf.bin > build/mem$$suf.32.hex; \
-		tmp_IFS=$$IFS; IFS= ; \
-		cnt=0; \
-		{ \
-			echo "initial begin"; \
-			while read -r line; do \
-				echo "    $${suf}mem[$$cnt] = 32'h$$line;"; \
-				cnt=$$((cnt + 1)); \
-			done < build/mem$$suf.32.hex; \
-			echo "end"; \
-		} > mem$$suf.txt; \
-		IFS=$$tmp_IFS; \
-	done
-endif
 
 run:
 	./obj_dir/top
