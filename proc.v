@@ -1050,8 +1050,12 @@ module decoder (
                      (`PROC_IS_RV64 && op == 5'b00110);  // OP-IMM, OP-IMM-32
     wire is_op = (op == 5'b01100) ||
                  (`PROC_IS_RV64 && op == 5'b01110);  // OP, OP-32
+    wire is_srai_imm = (f3 == 5) &&
+                       ((op == 5'b00100 && f7[6:1] == 6'b010000 &&
+                         (`PROC_IS_RV64 || f7[0] == 1'b0)) ||
+                        (`PROC_IS_RV64 && op == 5'b00110 && f7 == 7'b0100000));
     wire alu_c0 = (is_op_imm && f3 == 2) ||
-                  (is_op_imm && f3 == 5 && f7 == 7'b0100000) ||
+                  is_srai_imm ||
                   (is_op && (f10 == 10'b10 || f10 == 10'b0100000101));  // IS_SIGNED
     wire alu_c1 = (is_op_imm && (f3 == 2 || f3 == 3)) ||
                   (is_op && (f10 == 10'b100000000 || f10 == 10'b10 || f10 == 10'b11));  // IS_NEG
