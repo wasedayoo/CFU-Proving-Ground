@@ -454,26 +454,26 @@ module bimodal (
     input  wire             clk_i,
     input  wire             rst_i,
     input  wire             stall_i,
-    input  wire [     31:0] raddr_i,
+    input  wire [`PC_W-1:0] raddr_i,
     output wire [      1:0] pat_hist_o,
     output wire             br_pred_tkn_o,
     output wire [`PC_W-1:0] br_pred_pc_o,
     input  wire             br_tkn_i,
     input  wire             br_tsfr_i,
-    input  wire [     31:0] waddr_i,
+    input  wire [`PC_W-1:0] waddr_i,
     input  wire [      1:0] pat_hist_i,
-    input  wire [     31:0] br_tkn_pc_i
+    input  wire [`PC_W-1:0] br_tkn_pc_i
 );
 
     integer i;
     (* ram_style = "block" *) reg [`PC_W-1:0] btb[0:`BTB_ENTRY-1];  // BTB, branch target buf
-    initial for (i = 0; i < `BTB_ENTRY; i = i + 1) btb[i] = 0;  // init with weak untaken
+    initial for (i = 0; i < `BTB_ENTRY; i = i + 1) btb[i] = 0;  // init with strongly untaken
 
     wire [1:0] w_cnt = (br_tkn_i) ? pat_hist_i + (pat_hist_i < 3) : pat_hist_i - (pat_hist_i > 0);
     wire [`BTB_IDXW-1:0] btb_ridx = raddr_i[`BTB_IDXW+`BTB_OSTW-1:`BTB_OSTW];
     wire [`BTB_IDXW-1:0] btb_widx = waddr_i[`BTB_IDXW+`BTB_OSTW-1:`BTB_OSTW];
 
-    reg [31:0] r_btb_entry;
+    reg [`PC_W-1:0] r_btb_entry;
     always @(posedge clk_i) if (!stall_i) begin
         r_btb_entry <= btb[btb_ridx];
         if (br_tsfr_i) begin
@@ -483,7 +483,7 @@ module bimodal (
 
     assign pat_hist_o    = r_btb_entry[1:0];
     assign br_pred_tkn_o = r_btb_entry[1];
-    assign br_pred_pc_o  = {r_btb_entry[`PC_W-1:2], 2'b0};
+    assign br_pred_pc_o  = {r_btb_entry[`PC_W-1:2], 2'b00};
 endmodule
 
 /******************************************************************************************/
