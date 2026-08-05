@@ -118,9 +118,9 @@ module main (
 endmodule
 
 module m_imem (
-    input  wire        clk_i,
+    input  wire             clk_i,
     input  wire [`XLEN-1:0] raddr_i,
-    output wire [31:0] rdata_o
+    output wire [     31:0] rdata_o
 );
 
     (* ram_style = "block" *) reg [31:0] imem[0:`IMEM_ENTRIES-1];
@@ -136,13 +136,13 @@ module m_imem (
 endmodule
 
 module m_dmem (
-    input  wire        clk_i,
-    input  wire        re_i,
-    input  wire        we_i,
-    input  wire [`XLEN-1:0] addr_i,
-    input  wire [`XLEN-1:0] wdata_i,
-    input  wire  [`XBYTES-1:0] wstrb_i,
-    output wire [`XLEN-1:0] rdata_o
+    input  wire               clk_i,
+    input  wire               re_i,
+    input  wire               we_i,
+    input  wire [  `XLEN-1:0] addr_i,
+    input  wire [  `XLEN-1:0] wdata_i,
+    input  wire [`XBYTES-1:0] wstrb_i,
+    output wire [  `XLEN-1:0] rdata_o
 );
 
     (* ram_style = "block" *) reg [`XLEN-1:0] dmem[0:`DMEM_ENTRIES-1];
