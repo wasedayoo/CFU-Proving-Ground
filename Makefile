@@ -33,7 +33,7 @@ PART_cmod_a7  := xc7a35ticpg236-1L
 HLS_PART := $(or $(PART_$(TARGET)),$(error Unsupported TARGET: $(TARGET)))
 HLS_CFG  := constr/cfu_hls.cfg
 
-.PHONY: build prog run clean
+.PHONY: build prog run clean mtkernel-smoke mtkernel-smoke-build mtkernel-smoke-run
 all: prog build
 
 build:
@@ -42,6 +42,26 @@ build:
 
 imem_size =	$(shell grep -oP "\`define\s+IMEM_SIZE\s+\(\K[^)]*" config.vh | bc)
 dmem_size =	$(shell grep -oP "\`define\s+DMEM_SIZE\s+\(\K[^)]*" config.vh | bc)
+
+MTKERNEL_DIR ?= ../mtkernel_cfu
+MTKERNEL_STARTUP := $(MTKERNEL_DIR)/kernel/sysdepend/cpu/core/riscv/startup.S
+MTKERNEL_RESET   := $(MTKERNEL_DIR)/kernel/sysdepend/cpu/core/riscv/reset_hdl.c
+
+mtkernel-smoke:
+	mkdir -p build
+	$(GCC) -Os -march=rv32im -mabi=ilp32 -ffreestanding -nostdlib -mno-relax \
+		-D_IOTE_RISCV_ -I$(MTKERNEL_DIR)/include \
+		-Wl,--build-id=none -Wl,-Map,build/mtkernel-smoke.map \
+		-Tapp/mtkernel_smoke.ld -o build/main.elf \
+		$(MTKERNEL_STARTUP) $(MTKERNEL_RESET)
+	$(MAKE) initf
+
+mtkernel-smoke-build: mtkernel-smoke
+	CCACHE_DISABLE=1 $(RTLSIM) --binary --trace --top-module top -DMTKERNEL_SMOKE \
+		--Wno-WIDTHTRUNC --Wno-WIDTHEXPAND -o top *.v
+
+mtkernel-smoke-run: mtkernel-smoke-build
+	./obj_dir/top
 
 
 

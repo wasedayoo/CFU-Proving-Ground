@@ -36,7 +36,7 @@
 `endif  // CONFIG_VH_
 
 // cpu
-`define RV64
+// `define RV64
 
 `ifdef RV64
 `define XLEN 64

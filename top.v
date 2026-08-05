@@ -48,6 +48,34 @@ module top;
         end
     end
 
+`ifdef MTKERNEL_SMOKE
+    reg [31:0] smoke_cycles = 0;
+    always @(posedge clk) begin
+        if (!m0.rst) begin
+            smoke_cycles <= smoke_cycles + 1;
+
+            if (m0.cpu.MaWb_v && smoke_cycles < 100) begin
+                $display("TRACE: pc=%08x insn=%08x", m0.cpu.MaWb_pc, m0.cpu.MaWb_ir);
+            end
+
+            if (m0.cpu.dbus_wvalid_o && m0.cpu.dbus_addr_o == 32'h10000000) begin
+                if (m0.cpu.dbus_wdata_o[31:0] == 32'h12345678) begin
+                    $display("MTKERNEL_SMOKE: PASS");
+                    $finish;
+                end else begin
+                    $display("MTKERNEL_SMOKE: FAIL (data=%08x)", m0.cpu.dbus_wdata_o[31:0]);
+                    $fatal(1);
+                end
+            end
+
+            if (smoke_cycles == 1000) begin
+                $display("MTKERNEL_SMOKE: TIMEOUT");
+                $fatal(1);
+            end
+        end
+    end
+`endif
+
     final begin
         $write("\n");
         $write("===> mcycle                                 : %10d\n", mcycle);
