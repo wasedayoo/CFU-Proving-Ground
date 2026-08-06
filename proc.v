@@ -58,6 +58,7 @@ module cpu (
     reg [`MUL_CTRL_WIDTH-1:0] IdEx_mul_ctrl;
     reg [`DIV_CTRL_WIDTH-1:0] IdEx_div_ctrl;
     reg [`CFU_CTRL_WIDTH-1:0] IdEx_cfu_ctrl;
+    reg [                2:0] IdEx_csr_ctrl;
     reg                       IdEx_rs1_fwd_Ma_to_Ex;
     reg                       IdEx_rs2_fwd_Ma_to_Ex;
     reg [          `XLEN-1:0] IdEx_src1;
@@ -83,6 +84,9 @@ module cpu (
     reg [                4:0] ExMa_rd;
     reg [          `XLEN-1:0] ExMa_rslt;
     reg [          `XLEN-1:0] ExMa_mdc_rslt;  // mul_div_cfu_rslt
+    reg                       ExMa_csr_we;
+    reg [               11:0] ExMa_csr_addr;
+    reg [          `XLEN-1:0] ExMa_csr_wdata;
     reg                       ExMa_j_b_insn;  // jump or branch insn
     reg                       ExMa_mul_stall;
     reg                       ExMa_div_stall;
@@ -205,6 +209,7 @@ module cpu (
     wire [ `MUL_CTRL_WIDTH-1:0] Id_mul_ctrl;
     wire [ `DIV_CTRL_WIDTH-1:0] Id_div_ctrl;
     wire [ `CFU_CTRL_WIDTH-1:0] Id_cfu_ctrl;
+    wire [                2:0] Id_csr_ctrl;
     decoder decoder (
         .ir_i       (IfId_ir),       // input  wire                 [31:0]
         .src2_ctrl_o(Id_src2_ctrl),  // output wire [`SRC2_CTRL_WIDTH-1:0]
@@ -213,7 +218,8 @@ module cpu (
         .lsu_ctrl_o (Id_lsu_ctrl),   // output wire  [`LSU_CTRL_WIDTH-1:0]
         .mul_ctrl_o (Id_mul_ctrl),   // output wire  [`MUL_CTRL_WIDTH-1:0]
         .div_ctrl_o (Id_div_ctrl),   // output wire  [`DIV_CTRL_WIDTH-1:0]
-        .cfu_ctrl_o (Id_cfu_ctrl)    // output wire  [`CFU_CTRL_WIDTH-1:0]
+        .cfu_ctrl_o (Id_cfu_ctrl),   // output wire  [`CFU_CTRL_WIDTH-1:0]
+        .csr_ctrl_o (Id_csr_ctrl)    // output wire                 [2:0]
     );
 
     // immediate value generator
@@ -272,6 +278,7 @@ module cpu (
             IdEx_lsu_ctrl         <= Id_lsu_ctrl;
             IdEx_mul_ctrl         <= Id_mul_ctrl;
             IdEx_div_ctrl         <= Id_div_ctrl;
+            IdEx_csr_ctrl         <= Id_csr_ctrl;
             IdEx_rs1_fwd_Ma_to_Ex <= Id_rs1_fwd_Ma_to_Ex;
             IdEx_rs2_fwd_Ma_to_Ex <= Id_rs2_fwd_Ma_to_Ex;
             IdEx_src1             <= Id_src1;
@@ -291,6 +298,30 @@ module cpu (
     ///// data forwarding
     wire [`XLEN-1:0] Ex_src1 = (IdEx_rs1_fwd_Ma_to_Ex) ? ExMa_rslt : IdEx_src1;
     wire [`XLEN-1:0] Ex_src2 = (IdEx_rs2_fwd_Ma_to_Ex) ? ExMa_rslt : IdEx_src2;
+
+    ///// control and status registers
+    // csr_ctrl[0]: CSR instruction, [1]: CSRRW, [2]: CSRRS
+    wire [      11:0] Ex_csr_addr = IdEx_ir[31:20];
+    wire [ `XLEN-1:0] csr_rdata;
+    wire              ExMa_csr_forward = ExMa_v && ExMa_csr_we &&
+                                             (ExMa_csr_addr == Ex_csr_addr);
+    wire [ `XLEN-1:0] Ex_csr_rdata =
+        ExMa_csr_forward ? ExMa_csr_wdata : csr_rdata;
+    wire              Ex_csr_we = Ex_valid && IdEx_csr_ctrl[0] &&
+                                  (IdEx_csr_ctrl[1] ||
+                                   (IdEx_csr_ctrl[2] && (IdEx_ir[19:15] != 0)));
+    wire [ `XLEN-1:0] Ex_csr_wdata =
+        IdEx_csr_ctrl[1] ? Ex_src1 : (Ex_csr_rdata | Ex_src1);
+
+    csr_file csr (
+        .clk_i  (clk_i),
+        .rst_i  (rst),
+        .raddr_i(Ex_csr_addr),
+        .rdata_o(csr_rdata),
+        .we_i   (ExMa_v && ExMa_csr_we && !ExMa_stall && !w_stall),
+        .waddr_i(ExMa_csr_addr),
+        .wdata_i(ExMa_csr_wdata)
+    );
 
     ///// arithmetic logic unit
     wire [`XLEN-1:0] Ex_alu_rslt;
@@ -408,7 +439,10 @@ module cpu (
             ExMa_dbus_offset   <= dbus_offset;
             ExMa_rf_we         <= IdEx_rf_we;
             ExMa_rd            <= IdEx_rd;
-            ExMa_rslt          <= Ex_alu_rslt;
+            ExMa_rslt          <= IdEx_csr_ctrl[0] ? Ex_csr_rdata : Ex_alu_rslt;
+            ExMa_csr_we        <= Ex_csr_we;
+            ExMa_csr_addr      <= Ex_csr_addr;
+            ExMa_csr_wdata     <= Ex_csr_wdata;
             ExMa_j_b_insn      <= IdEx_bru_ctrl[0] & Ex_v;
         end
     end
@@ -508,7 +542,9 @@ module pre_decoder (
         (`PROC_IS_RV64 && opcode == 5'b00110) ? `I_TYPE :  // OP-IMM-32
         (opcode == 5'b01100) ? `R_TYPE :  // OP
         (`PROC_IS_RV64 && opcode == 5'b01110) ? `R_TYPE :  // OP-32
-        (opcode == 5'b00010) ? `R_TYPE : `NONE_TYPE;  // CUSTOM-0 : NONE
+        (opcode == 5'b00010) ? `R_TYPE :  // CUSTOM-0
+        (opcode == 5'b11100 &&
+         (ir_i[14:12] == 3'b001 || ir_i[14:12] == 3'b010)) ? `I_TYPE : `NONE_TYPE;  // CSRRW/CSRRS
 
     assign rd_o = ((instr_type_o == `S_TYPE) | (instr_type_o == `B_TYPE)) ? 0 : ir_i[11:7];
     assign rs1_o = ((instr_type_o == `U_TYPE) | (instr_type_o == `J_TYPE)) ? 0 : ir_i[19:15];
@@ -991,7 +1027,8 @@ module decoder (
     output wire [ `LSU_CTRL_WIDTH-1:0] lsu_ctrl_o,
     output wire [ `MUL_CTRL_WIDTH-1:0] mul_ctrl_o,
     output wire [ `DIV_CTRL_WIDTH-1:0] div_ctrl_o,
-    output wire [ `CFU_CTRL_WIDTH-1:0] cfu_ctrl_o
+    output wire [ `CFU_CTRL_WIDTH-1:0] cfu_ctrl_o,
+    output wire [                  2:0] csr_ctrl_o
 );
 
     wire [31:0] ir = ir_i;
@@ -1000,6 +1037,11 @@ module decoder (
     wire [ 2:0] f3 = ir[14:12];
     wire [ 6:0] f7 = ir[31:25];
     assign cfu_ctrl_o = (op == 5'b00010) ? {f7, f3, 1'b1} : 0;
+
+    wire is_csr   = (opcode == 7'b1110011) && (f3 == 3'b001 || f3 == 3'b010);
+    wire is_csrrw = is_csr && (f3 == 3'b001);
+    wire is_csrrs = is_csr && (f3 == 3'b010);
+    assign csr_ctrl_o = {is_csrrs, is_csrrw, is_csr};
 
     wire src2_c0 = (op == 5'b00101);  // AUIPC
     wire src2_c1 = (op == 5'b01101) | (op == 5'b00100) | (`PROC_IS_RV64 && op == 5'b00110);  // LUI, OP-IMM, OP-IMM-32
@@ -1077,6 +1119,63 @@ module decoder (
     assign alu_ctrl_o = {
         alu_c9, alu_c8, alu_c7, alu_c6, alu_c5, alu_c4, alu_c3, alu_c2, alu_c1, alu_c0
     };
+endmodule
+
+/******************************************************************************************/
+module csr_file (
+    input  wire             clk_i,
+    input  wire             rst_i,
+
+    input  wire [     11:0] raddr_i,
+    output reg  [`XLEN-1:0] rdata_o,
+
+    input  wire             we_i,
+    input  wire [     11:0] waddr_i,
+    input  wire [`XLEN-1:0] wdata_i
+);
+
+    localparam [11:0] CSR_MSTATUS = 12'h300;
+    localparam [11:0] CSR_MIE     = 12'h304;
+
+    reg [`XLEN-1:0] mstatus;
+    reg [`XLEN-1:0] mie;
+
+    always @(*) begin
+        case (raddr_i)
+            CSR_MSTATUS: rdata_o = mstatus;
+            CSR_MIE:     rdata_o = mie;
+            default:     rdata_o = {`XLEN{1'b0}};
+        endcase
+    end
+
+    always @(posedge clk_i) begin
+        if (rst_i) begin
+`ifdef MTKERNEL_SMOKE
+            // Test 5 starts from non-zero values so startup.S must clear them.
+            mstatus <= 32'h00000008;
+            mie     <= 32'h00000080;
+`else
+            mstatus <= {`XLEN{1'b0}};
+            mie     <= {`XLEN{1'b0}};
+`endif
+        end else if (we_i) begin
+            case (waddr_i)
+                CSR_MSTATUS: mstatus <= wdata_i;
+                CSR_MIE:     mie     <= wdata_i;
+                default: begin
+                    mstatus <= mstatus;
+                    mie     <= mie;
+                end
+            endcase
+        end
+    end
+
+`ifdef MTKERNEL_SMOKE
+    always @(posedge clk_i) begin
+        if (!rst_i && we_i)
+            $display("CSR_WE: addr=%03x data=%08x", waddr_i, wdata_i[31:0]);
+    end
+`endif
 endmodule
 
 `undef PROC_IS_RV64

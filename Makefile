@@ -49,7 +49,7 @@ MTKERNEL_RESET   := $(MTKERNEL_DIR)/kernel/sysdepend/cpu/core/riscv/reset_hdl.c
 
 mtkernel-smoke:
 	mkdir -p build
-	$(GCC) -Os -march=rv32im -mabi=ilp32 -ffreestanding -nostdlib -mno-relax \
+	$(GCC) -Os -march=rv32im_zicsr -mabi=ilp32 -ffreestanding -nostdlib -mno-relax \
 		-D_IOTE_RISCV_ -I$(MTKERNEL_DIR)/include \
 		-Wl,--build-id=none -Wl,-Map,build/mtkernel-smoke.map \
 		-Tapp/mtkernel_smoke.ld -o build/main.elf \
@@ -89,9 +89,10 @@ endif
 initf:
 	$(OBJDUMP) -D build/main.elf > build/main.dump
 	$(OBJCOPY) -O binary --only-section=.text build/main.elf build/memi.bin.tmp; \
-	$(OBJCOPY) -O binary --only-section=.data \
-						 --only-section=.rodata \
-						 --only-section=.bss \
+	$(OBJCOPY) -O binary --only-section=.test_status \
+					 --only-section=.data \
+					 --only-section=.rodata \
+					 --only-section=.bss \
 						 build/main.elf build/memd.bin.tmp; \
 	for suf in i d; do \
 		if [ "$$suf" = "i" ]; then \

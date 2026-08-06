@@ -79,7 +79,7 @@ Reset_Handler  = 0x0000001c
 _stack_top     = 0x10004000
 ```
 
-## テスト2: スタックを使ったC関数呼び出し
+## テスト2: スタックを使ったC関数呼び出し（完了）
 
 ### 目的
 
@@ -124,7 +124,51 @@ addi sp, sp, N
 - 期待する計算結果が`0x10000000`へ書かれる。
 - テストベンチがPASSを表示して終了する。
 
-## テスト3: `.data`、`.bss`、`gp`の確認
+### 確認結果
+
+`stack_test()`でスタックを16バイト確保し、ローカル配列へ書き込んだ値を
+読み戻していることを確認した。
+
+```asm
+addi sp, sp, -16
+sw   a5, 0(sp)
+sw   a5, 4(sp)
+lw   a5, 0(sp)
+lw   a4, 4(sp)
+sw   a5, 8(sp)
+lw   a5, 8(sp)
+sw   a5, 12(sp)
+lw   a0, 12(sp)
+addi sp, sp, 16
+ret
+```
+
+`Reset_Handler()`自身も戻りアドレスをスタックへ保存している。
+
+```asm
+addi sp, sp, -16
+sw   ra, 12(sp)
+call stack_test
+```
+
+シミュレーションでは、スタック最上部付近に次の書き込みが発生した。
+
+```text
+WE: addr=10003ffc data=00000018
+WE: addr=10003fe0 data=12340000
+WE: addr=10003fe4 data=00005678
+WE: addr=10003fe8 data=12345678
+WE: addr=10003fec data=12345678
+```
+
+最後に計算結果がシグネチャ領域へ書かれ、PASSした。
+
+```text
+WE: addr=10000000 data=12345678
+MTKERNEL_SMOKE: PASS
+```
+
+## テスト3: `.data`、`.bss`、`gp`の確認（完了）
 
 ### 目的
 
@@ -133,18 +177,18 @@ addi sp, sp, N
 
 ### 実装内容
 
-次のような変数を用意する。
+次の変数を用意する。
 
 ```c
-volatile uint32_t initialized_data = 0xa5a55a5a;
+volatile const uint32_t rodata_value = 0xa5a55a5a;
+volatile uint32_t initialized_data = 0x13579bdf;
 volatile uint32_t zero_initialized_data;
 ```
 
-確認する値を別々のDMEMアドレスへ書く。
+各値を実行時に読み出して検査し、結果を`test_status`へ書く。
 
 ```text
-0x10000000 <- initialized_data
-0x10000004 <- zero_initialized_data
+0x10000000 <- 最終結果
 ```
 
 ### 重要事項
@@ -162,19 +206,88 @@ CFU-PGはIMEMとDMEMが分離されたHarvard構成である。通常の組込�
 ### 確認項目
 
 - Mapファイル上で`.data`と`.bss`がDMEM内にある。
-- `memd.txt`に`0xa5a55a5a`が含まれる。
-- `initialized_data`の読み出し結果が`0xa5a55a5a`になる。
+- `memd.txt`に`0xa5a55a5a`と`0x13579bdf`が含まれる。
+- `rodata_value`の読み出し結果が`0xa5a55a5a`になる。
+- `initialized_data`の読み出し結果が`0x13579bdf`になる。
 - `.bss`を意図的にゼロクリアし、読み出し結果が`0`になる。
-- 必要に応じて`gp`相対命令の有無を`objdump`で確認する。
+- `__global_pointer$`がDMEM内に配置され、`startup.S`がその値を設定する。
+- `gp`相対ロード自体は、必要になった段階で別途確認する。
 
 ### 合格条件
 
 ```text
-0x10000000の値 = 0xa5a55a5a
-0x10000004の値 = 0x00000000
+0x10000000の最終値 = 0x12345678
+テストベンチ出力     = MTKERNEL_SMOKE: PASS
 ```
 
-## テスト4: 最小CSR読み書き
+### 採用した方式
+
+IMEMをDBUSから読まない方式（方法4）を採用した。
+
+```text
+.text        → memi.txtでIMEMへ初期配置
+.test_status → memd.txtでDMEMへ初期配置
+.rodata      → memd.txtでDMEMへ初期配置
+.data        → memd.txtでDMEMへ初期配置
+.bss         → Reset_Handlerでゼロクリア
+```
+
+`.data`のIMEMからDMEMへのコピーは行わない。
+
+### 確認結果
+
+ELFとMapファイルで次の配置を確認した。
+
+```text
+.text        0x00000000  size 0x00f4  IMEM
+.test_status 0x10000000  size 0x0004  DMEM
+.rodata      0x10000004  size 0x0004  DMEM
+.data        0x10000008  size 0x0004  DMEM
+.bss         0x1000000c  size 0x0004  DMEM
+```
+
+`memd.txt`の先頭は次の内容になった。
+
+```verilog
+dmem[0] = 32'hc001d00d;  // test_statusの初期値
+dmem[1] = 32'ha5a55a5a;  // .rodata
+dmem[2] = 32'h13579bdf;  // .data
+dmem[3] = 32'h00000000;  // .bss領域
+```
+
+`.bss`のゼロクリアが実際に動作していることを確認するため、
+`zero_initialized_data`へ一度`0xffffffff`を書き、その後
+`__bss_start`から`__bss_end`までをゼロクリアした。
+
+```text
+WE: addr=1000000c data=ffffffff
+WE: addr=1000000c data=00000000
+```
+
+実行時には次をそれぞれ`lw`で読み出して検査した。
+
+```text
+rodata_value          = 0xa5a55a5a
+initialized_data      = 0x13579bdf
+zero_initialized_data = 0x00000000
+```
+
+さらにテスト2のスタックテストも実行し、最終結果がPASSした。
+
+```text
+WE: addr=10000000 data=12345678
+MTKERNEL_SMOKE: PASS
+```
+
+不一致時のシグネチャは次のとおり。
+
+```text
+0xdead0001 = .rodata不一致
+0xdead0002 = .data不一致
+0xdead0003 = .bss不一致
+```
+
+## テスト4: 最小CSR読み書き（完了）
 
 ### 目的
 
@@ -224,7 +337,69 @@ bne  t1, zero, fail
 - `mie`へ`0x80`を書いて`0x80`を読み戻せる。
 - 不一致時にはFAIL値と実測値をDMEMへ書ける。
 
-## テスト5: 実物の`startup.S`をそのまま実行
+### 実装内容
+
+CSRは`main.v`ではなく、`proc.v`の`cpu`モジュール内に`csr_file`として
+実装した。今回保持するCSRは`mstatus`と`mie`の2つで、リセット値はいずれも
+ゼロとした。
+
+CPUには次の処理を追加した。
+
+- `pre_decoder`でSYSTEM opcode（`1110011`）のCSRRW/CSRRSを認識する。
+- `decoder`からCSR命令種別をID/EXパイプラインレジスタへ渡す。
+- EX段でCSRの旧値と新しい書き込み値を計算する。
+- CSRの旧値を通常の整数レジスタ書き戻し経路へ渡す。
+- CSRの更新は命令がMA段へ到達してから行う。
+- 連続する`csrw`→`csrr`のため、MA段の未反映値をEX段へ転送する。
+
+テストプログラムの`-march`は`rv32im_zicsr`へ変更した。
+テストスタブでは`mstatus`と`mie`について非ゼロ値の読み戻しと、
+ゼロクリア後の読み戻しを行う。不一致時には次の値を`test_status`へ、
+読み戻した実測値を`csr_actual`へ書く。
+
+```text
+0xdead0004 = mstatusへ0x00000008を書いた後の不一致
+0xdead0005 = mstatusをゼロクリアした後の不一致
+0xdead0006 = mieへ0x00000080を書いた後の不一致
+0xdead0007 = mieをゼロクリアした後の不一致
+```
+
+### 確認結果
+
+逆アセンブルで次のCSR命令が生成された。
+
+```asm
+csrw mstatus, a4
+csrr a5, mstatus
+csrw mstatus, a5
+csrr a5, mstatus
+csrw mie, a2
+csrr a4, mie
+csrw mie, a5
+csrr a5, mie
+```
+
+シミュレーションの命令トレースでも、CSR命令の実行を確認した。
+
+```text
+TRACE: pc=0000007c insn=30071073
+TRACE: pc=00000080 insn=300027f3
+TRACE: pc=000000d8 insn=30461073
+TRACE: pc=000000dc insn=30402773
+```
+
+CSR検査後もテスト1〜3のBSSゼロクリア、スタック操作、DMEM書き込みまで
+実行され、最終結果はPASSした。
+
+```text
+WE: addr=10000010 data=ffffffff
+WE: addr=10000010 data=00000000
+WE: addr=10003ffc data=00000018
+WE: addr=10000000 data=12345678
+MTKERNEL_SMOKE: PASS
+```
+
+## テスト5: 実物の`startup.S`をそのまま実行（完了）
 
 ### 目的
 
@@ -235,7 +410,7 @@ csrw mstatus, zero
 csrw mie, zero
 ```
 
-テスト1からテスト3までの処理と組み合わせ、実物の`startup.S`を変更せずに
+テスト1からテスト4までの処理と組み合わせ、実物の`startup.S`を変更せずに
 `Reset_Handler`へ到達できることを確認する。
 
 ### 合格条件
@@ -244,6 +419,68 @@ csrw mie, zero
 - `mstatus == 0`かつ`mie == 0`になっている。
 - `sp`と`gp`が正しい。
 - `Reset_Handler`がPASSシグネチャを書く。
+
+### 起動コードより前に非ゼロ値を用意する方法
+
+`startup.S`より前にソフトウェア命令を実行することはできないため、
+シミュレーション用のハードウェアリセット値を使用する。
+
+`MTKERNEL_SMOKE`を定義したときだけ、`csr_file`のリセット値を次の値にする。
+
+```text
+mstatus = 0x00000008
+mie     = 0x00000080
+```
+
+通常のビルドでは、両CSRのリセット値は従来どおりゼロとする。
+このためFPGA用の通常構成にはテスト用の非ゼロ値が残らない。
+
+`Reset_Handler`ではテスト4がCSRを書き換える前に両CSRを読み出す。
+`startup.S`のゼロ書き込みが機能しなかった場合は次の値を出力する。
+
+```text
+0xdead0008 = startup.S実行後もmstatusが非ゼロ
+0xdead0009 = startup.S実行後もmieが非ゼロ
+```
+
+### 確認結果
+
+リセットベクタの先頭に、コメントを外した2命令が配置された。
+
+```asm
+00000000 <_start>:
+   0: 30001073  csrw mstatus,zero
+   4: 30401073  csrw mie,zero
+   8: 10004117  auipc sp,0x10004
+   c: ff810113  addi sp,sp,-8  # 10004000 <_stack_top>
+```
+
+シミュレーションでは、テスト用の非ゼロリセット値に対して、
+`startup.S`がゼロを書き込んだことを確認した。
+
+```text
+CSR_WE: addr=300 data=00000000
+CSR_WE: addr=304 data=00000000
+TRACE: pc=00000000 insn=30001073
+TRACE: pc=00000004 insn=30401073
+```
+
+その後、`Reset_Handler`内で両CSRを読み出し、ゼロ判定を通過した。
+
+```asm
+80: 300027f3  csrr a5,mstatus
+84: 02078663  beqz a5,b0
+b0: 304027f3  csrr a5,mie
+b4: 00078c63  beqz a5,cc
+```
+
+`sp`と`gp`の設定、テスト4の非ゼロCSR読み書き、テスト1〜3の処理も
+引き続き実行され、最終結果はPASSした。
+
+```text
+WE: addr=10000000 data=12345678
+MTKERNEL_SMOKE: PASS
+```
 
 ## テスト6: `mtvec`と`mret`
 
@@ -519,11 +756,10 @@ Verilatorで確認済みの構成をFPGA上で動作させる。
 
 ## 推奨する直近の作業
 
-次に着手するのはテスト2とする。
+次に着手するのはテスト6とする。
 
-1. `reset_hdl.c`へ`noinline`のスタックテスト関数を追加する。
-2. `objdump`で`sp`相対の`sw`/`lw`を確認する。
-3. テストベンチの期待値をスタックテスト結果へ変更する。
-4. `make mtkernel-smoke-run`でPASSを確認する。
-5. PASS後、テスト3の`.data`/`.bss`確認へ進む。
-
+1. `mtvec`、`mepc`、`mcause`をCSRファイルへ追加する。
+2. CSRの制御情報を`funct3`ベースへ整理する。
+3. `CSRRC`を含む必要なCSR命令を追加する。
+4. `mret`によるPC変更と`mstatus`更新を実装する。
+5. 最初は割込みを発生させず、同期的な単体テストで確認する。
