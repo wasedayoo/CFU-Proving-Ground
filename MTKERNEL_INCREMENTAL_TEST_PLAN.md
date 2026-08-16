@@ -594,7 +594,7 @@ WE: addr=10000000 data=12345678
 MTKERNEL_SMOKE: PASS
 ```
 
-## テスト7: 同期例外によるトラップ往復
+## テスト7: 同期例外によるトラップ往復（完了）
 
 ### 目的
 
@@ -629,6 +629,104 @@ ecall
 - `mepc`が`ecall`のアドレスと一致する。
 - `mret`後に`ecall`の次の命令へ戻る。
 - トラップ前後で汎用レジスタが意図せず壊れない。
+
+### 実装内容
+
+Machine modeの`ecall`（命令語`0x00000073`）をデコードし、命令情報を
+ID/EX、EX/MAパイプラインレジスタでMA段まで渡す。MA段へ到達した有効な
+`ecall`を同期例外として確定し、次を行う。
+
+```text
+mepc        <- ecallのPC
+mcause      <- 11
+mstatus.MPIE <- mstatus.MIE
+mstatus.MIE  <- 0
+mstatus.MPP  <- 3（Machine mode）
+PC          <- mtvec.BASE
+```
+
+トラップによるPC変更を既存のリダイレクト経路へ追加し、IF、ID、EX段にある
+`ecall`より後の命令を破棄する。例外を発生させた`ecall`自身は通常命令として
+リタイアさせない。
+
+`csr_file`にはトラップ専用の更新入力を追加した。更新の優先順位は、リセット、
+トラップ入口、`mret`、通常のCSR命令の順とする。`mtvec`はDirect modeのみを
+対象とし、保存済みの4バイト境界アドレスをリダイレクト先として使用する。
+
+テスト用の`ecall_test.S`では次を行う。
+
+1. `mtvec`へ`ecall_trap_handler`を設定する。
+2. `mstatus.MIE`を1にする。
+3. 保存確認用レジスタと、後続ストア用の値を用意する。
+4. `ecall`を実行する。
+5. ハンドラで`mcause`、`mepc`、`mstatus`をDMEMへ記録する。
+6. `mepc`へ4を加えて`mret`する。
+7. `ecall`直後の命令から再開し、通常の`ret`でCコードへ戻る。
+
+`ecall`の直後にはDMEMへのストアを配置した。ハンドラ入口でその書き込み先が
+まだゼロであることを確認し、トラップ時にEX段の後続命令が破棄されたことを
+検査する。`mret`後には同じストアが実行され、値が1になることも確認する。
+
+不一致時のシグネチャは次のとおり。
+
+```text
+0xdead000f = トラップハンドラ未到達
+0xdead0010 = mcause不一致
+0xdead0011 = mepc不一致
+0xdead0012 = トラップ入口のmstatus不一致
+0xdead0013 = ecall後続命令の破棄失敗
+0xdead0014 = mret後にecallの次の命令へ未到達
+0xdead0015 = mret後のmstatusまたは汎用レジスタ保持不一致
+```
+
+### 確認結果
+
+ELFでは次の配置となった。
+
+```text
+ecall_test         = 0x00000404
+ecall_test_site    = 0x00000448
+ecall_trap_handler = 0x00000490
+```
+
+逆アセンブルで、`ecall`直後に検査用ストアがあり、ハンドラが`mepc`へ4を
+加えて`mret`していることを確認した。
+
+```asm
+00000448 <ecall_test_site>:
+448: 00000073  ecall
+44c: 01de2023  sw t4,0(t3)
+
+00000490 <ecall_trap_handler>:
+49c: 342022f3  csrr t0,mcause
+4ac: 341022f3  csrr t0,mepc
+4bc: 300022f3  csrr t0,mstatus
+4f4: 341022f3  csrr t0,mepc
+4f8: 00428293  addi t0,t0,4
+4fc: 34129073  csrw mepc,t0
+50c: 30200073  mret
+```
+
+シミュレーションでは次を確認した。
+
+```text
+CSR_WE: addr=305 data=00000490
+CSR_WE: addr=300 data=00000008
+TRAP: pc=00000448 cause=0000000b
+WE: addr=1000001c data=0000000b  // mcause
+WE: addr=10000018 data=00000448  // mepc
+WE: addr=10000014 data=00001880  // trap-entry mstatus
+WE: addr=10000010 data=00000000  // younger store was squashed
+CSR_WE: addr=341 data=0000044c
+WE: addr=1000000c data=00000001  // store after MRET
+```
+
+過去のテスト1からテスト6も含めて最終結果がPASSした。
+
+```text
+WE: addr=10000000 data=12345678
+MTKERNEL_SMOKE: PASS
+```
 
 ## テスト8: タイマMMIOとMachine Timer Interrupt
 
@@ -834,10 +932,10 @@ Verilatorで確認済みの構成をFPGA上で動作させる。
 
 ## 推奨する直近の作業
 
-次に着手するのはテスト7とする。
+次に着手するのはテスト8とする。
 
-1. Machine modeの`ecall`をデコードする。
-2. トラップ入口で`mepc`、`mcause`、`mstatus`を更新する。
-3. `mtvec` Direct modeへPCを変更し、後続命令を破棄する。
-4. ハンドラで`mcause == 11`と`mepc`を確認する。
-5. `mepc`へ4を加え、テスト6で実装した`mret`で復帰する。
+1. 64ビットの`mtime`と`mtimecmp`を実装する。
+2. `mtime >= mtimecmp`をMachine Timer Interrupt要求へ変換する。
+3. `mie.MTIE`と`mstatus.MIE`を含む割込み受付条件を実装する。
+4. 割込み時に`mcause=0x80000007`としてトラップ入口へ接続する。
+5. ハンドラで`mtimecmp`を更新し、`mret`で割り込まれた処理へ復帰する。

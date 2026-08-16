@@ -60,6 +60,7 @@ module cpu (
     reg [`CFU_CTRL_WIDTH-1:0] IdEx_cfu_ctrl;
     reg [                2:0] IdEx_csr_ctrl;
     reg                       IdEx_is_mret;
+    reg                       IdEx_is_ecall;
     reg                       IdEx_rs1_fwd_Ma_to_Ex;
     reg                       IdEx_rs2_fwd_Ma_to_Ex;
     reg [          `XLEN-1:0] IdEx_src1;
@@ -90,6 +91,7 @@ module cpu (
     reg [          `XLEN-1:0] ExMa_csr_wdata;
     reg                       ExMa_is_mret;
     reg [          `XLEN-1:0] ExMa_mret_pc;
+    reg                       ExMa_is_ecall;
     reg                       ExMa_j_b_insn;  // jump or branch insn
     reg                       ExMa_mul_stall;
     reg                       ExMa_div_stall;
@@ -111,18 +113,21 @@ module cpu (
 
     wire Ma_br_tkn = (ExMa_v && ExMa_br_tkn);
     wire Ma_mret   = (ExMa_v && ExMa_is_mret);
+    wire Ma_trap   = (ExMa_v && ExMa_is_ecall);
     wire        Ma_br_misp     = (rst) ? 1 :
                                  (ExMa_v && ExMa_is_ctrl_tsfr &&
                                  ((Ma_br_tkn) ? ExMa_br_misp_rslt1 : ExMa_br_misp_rslt2));
-    wire        Ma_pc_redirect = Ma_br_misp || Ma_mret;
+    wire        Ma_pc_redirect = Ma_br_misp || Ma_mret || Ma_trap;
     wire [`XLEN-1:0] Ma_redirect_pc  = (rst)         ? `RESET_VECTOR :
+                                       (Ma_trap)     ? csr_mtvec :
                                        (Ma_mret)     ? ExMa_mret_pc :
                                        (ExMa_br_tkn) ? ExMa_br_tkn_pc : ExMa_pc+4;
 
     wire If_v = (Ma_pc_redirect) ? 0 : (IfId_load_muldiv_use) ? IfId_v : 1;
     wire Id_v = (Ma_pc_redirect || IfId_load_muldiv_use) ? 0 : IfId_v;
     wire Ex_v = (Ma_pc_redirect) ? 0 : IdEx_v;
-    wire Ma_v = ExMa_v;
+    // An instruction that raises a synchronous exception does not retire.
+    wire Ma_v = ExMa_v && !Ma_trap;
     wire stall = ExMa_stall;
 
 //------------------------------------------------------------------------------
@@ -217,6 +222,7 @@ module cpu (
     wire [ `CFU_CTRL_WIDTH-1:0] Id_cfu_ctrl;
     wire [                2:0] Id_csr_ctrl;
     wire                       Id_is_mret;
+    wire                       Id_is_ecall;
     decoder decoder (
         .ir_i       (IfId_ir),       // input  wire                 [31:0]
         .src2_ctrl_o(Id_src2_ctrl),  // output wire [`SRC2_CTRL_WIDTH-1:0]
@@ -227,7 +233,8 @@ module cpu (
         .div_ctrl_o (Id_div_ctrl),   // output wire  [`DIV_CTRL_WIDTH-1:0]
         .cfu_ctrl_o (Id_cfu_ctrl),   // output wire  [`CFU_CTRL_WIDTH-1:0]
         .csr_ctrl_o (Id_csr_ctrl),   // output wire                 [2:0]
-        .is_mret_o  (Id_is_mret)     // output wire
+        .is_mret_o  (Id_is_mret),    // output wire
+        .is_ecall_o (Id_is_ecall)    // output wire
     );
 
     // immediate value generator
@@ -288,6 +295,7 @@ module cpu (
             IdEx_div_ctrl         <= Id_div_ctrl;
             IdEx_csr_ctrl         <= Id_csr_ctrl;
             IdEx_is_mret          <= Id_is_mret;
+            IdEx_is_ecall         <= Id_is_ecall;
             IdEx_rs1_fwd_Ma_to_Ex <= Id_rs1_fwd_Ma_to_Ex;
             IdEx_rs2_fwd_Ma_to_Ex <= Id_rs2_fwd_Ma_to_Ex;
             IdEx_src1             <= Id_src1;
@@ -313,6 +321,7 @@ module cpu (
     wire [      11:0] Ex_csr_addr = IdEx_ir[31:20];
     wire [ `XLEN-1:0] csr_rdata;
     wire [ `XLEN-1:0] csr_mepc;
+    wire [ `XLEN-1:0] csr_mtvec;
     wire              ExMa_csr_forward = ExMa_v && ExMa_csr_we &&
                                              (ExMa_csr_addr == Ex_csr_addr);
     wire [ `XLEN-1:0] Ex_csr_rdata =
@@ -339,10 +348,14 @@ module cpu (
         .raddr_i(Ex_csr_addr),
         .rdata_o(csr_rdata),
         .mepc_o (csr_mepc),
+        .mtvec_o(csr_mtvec),
         .we_i   (ExMa_v && ExMa_csr_we && !ExMa_stall && !w_stall),
         .waddr_i(ExMa_csr_addr),
         .wdata_i(ExMa_csr_wdata),
-        .mret_i (Ma_mret && !ExMa_stall && !w_stall)
+        .mret_i (Ma_mret && !ExMa_stall && !w_stall),
+        .trap_i (Ma_trap && !ExMa_stall && !w_stall),
+        .trap_pc_i(ExMa_pc),
+        .trap_cause_i({{(`XLEN-4){1'b0}}, 4'd11})
     );
 
     ///// arithmetic logic unit
@@ -467,6 +480,7 @@ module cpu (
             ExMa_csr_wdata     <= Ex_csr_wdata;
             ExMa_is_mret       <= IdEx_is_mret && Ex_valid;
             ExMa_mret_pc       <= Ex_mret_pc;
+            ExMa_is_ecall      <= IdEx_is_ecall && Ex_valid;
             ExMa_j_b_insn      <= IdEx_bru_ctrl[0] & Ex_v;
         end
     end
@@ -1052,7 +1066,8 @@ module decoder (
     output wire [ `DIV_CTRL_WIDTH-1:0] div_ctrl_o,
     output wire [ `CFU_CTRL_WIDTH-1:0] cfu_ctrl_o,
     output wire [                 2:0] csr_ctrl_o,
-    output wire                        is_mret_o
+    output wire                        is_mret_o,
+    output wire                        is_ecall_o
 );
 
     wire [31:0] ir = ir_i;
@@ -1065,6 +1080,7 @@ module decoder (
     wire is_csr = (opcode == 7'b1110011) && (f3 != 3'b000);
     assign csr_ctrl_o = is_csr ? f3 : 3'b000;
     assign is_mret_o = (ir == 32'h30200073);
+    assign is_ecall_o = (ir == 32'h00000073);
 
     wire src2_c0 = (op == 5'b00101);  // AUIPC
     wire src2_c1 = (op == 5'b01101) | (op == 5'b00100) | (`PROC_IS_RV64 && op == 5'b00110);  // LUI, OP-IMM, OP-IMM-32
@@ -1152,11 +1168,15 @@ module csr_file (
     input  wire [     11:0] raddr_i,
     output reg  [`XLEN-1:0] rdata_o,
     output wire [`XLEN-1:0] mepc_o,
+    output wire [`XLEN-1:0] mtvec_o,
 
     input  wire             we_i,
     input  wire [     11:0] waddr_i,
     input  wire [`XLEN-1:0] wdata_i,
-    input  wire             mret_i
+    input  wire             mret_i,
+    input  wire             trap_i,
+    input  wire [`XLEN-1:0] trap_pc_i,
+    input  wire [`XLEN-1:0] trap_cause_i
 );
 
     localparam [11:0] CSR_MSTATUS = 12'h300;
@@ -1172,6 +1192,7 @@ module csr_file (
     reg [`XLEN-1:0] mcause;
 
     assign mepc_o = mepc;
+    assign mtvec_o = mtvec;
 
     always @(*) begin
         case (raddr_i)
@@ -1197,6 +1218,13 @@ module csr_file (
             mtvec   <= {`XLEN{1'b0}};
             mepc    <= {`XLEN{1'b0}};
             mcause  <= {`XLEN{1'b0}};
+        end else if (trap_i) begin
+            // Trap entry: save interrupt state and enter Machine mode.
+            mepc           <= {trap_pc_i[`XLEN-1:2], 2'b00};
+            mcause         <= trap_cause_i;
+            mstatus[7]     <= mstatus[3];
+            mstatus[3]     <= 1'b0;
+            mstatus[12:11] <= 2'b11;
         end else if (mret_i) begin
             // This core implements Machine mode only, so MPP returns to M-mode.
             mstatus[3]     <= mstatus[7];
@@ -1224,6 +1252,8 @@ module csr_file (
     always @(posedge clk_i) begin
         if (!rst_i && we_i)
             $display("CSR_WE: addr=%03x data=%08x", waddr_i, wdata_i[31:0]);
+        if (!rst_i && trap_i)
+            $display("TRAP: pc=%08x cause=%08x", trap_pc_i[31:0], trap_cause_i[31:0]);
     end
 `endif
 endmodule
