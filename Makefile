@@ -46,6 +46,7 @@ dmem_size =	$(shell grep -oP "\`define\s+DMEM_SIZE\s+\(\K[^)]*" config.vh | bc)
 MTKERNEL_DIR ?= ../mtkernel_cfu
 MTKERNEL_STARTUP := $(MTKERNEL_DIR)/kernel/sysdepend/cpu/core/riscv/startup.S
 MTKERNEL_RESET   := $(MTKERNEL_DIR)/kernel/sysdepend/cpu/core/riscv/reset_hdl.c
+MTKERNEL_MRET_TEST := $(MTKERNEL_DIR)/kernel/sysdepend/cpu/core/riscv/mret_test.S
 
 mtkernel-smoke:
 	mkdir -p build
@@ -53,7 +54,7 @@ mtkernel-smoke:
 		-D_IOTE_RISCV_ -I$(MTKERNEL_DIR)/include \
 		-Wl,--build-id=none -Wl,-Map,build/mtkernel-smoke.map \
 		-Tapp/mtkernel_smoke.ld -o build/main.elf \
-		$(MTKERNEL_STARTUP) $(MTKERNEL_RESET)
+		$(MTKERNEL_STARTUP) $(MTKERNEL_RESET) $(MTKERNEL_MRET_TEST)
 	$(MAKE) initf
 
 mtkernel-smoke-build: mtkernel-smoke

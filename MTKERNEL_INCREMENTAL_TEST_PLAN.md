@@ -482,7 +482,7 @@ WE: addr=10000000 data=12345678
 MTKERNEL_SMOKE: PASS
 ```
 
-## テスト6: `mtvec`と`mret`
+## テスト6: `mtvec`と`mret`（完了）
 
 ### 目的
 
@@ -515,6 +515,84 @@ MTKERNEL_SMOKE: PASS
 - `mepc`を書いて読み戻せる。
 - `mret`後のPCが`mepc`と一致する。
 - `mret`時の`mstatus`更新が実装方針どおりである。
+
+### 実装内容
+
+CSR制御を個別の判定ビットではなく、SYSTEM命令の`funct3`をそのまま
+パイプラインへ渡す方式に変更した。これにより、レジスタ形式と即値形式を含む
+次のCSR命令を扱える。
+
+- `CSRRW` / `CSRRWI`
+- `CSRRS` / `CSRRSI`
+- `CSRRC` / `CSRRCI`
+
+`csr_file`へ`mtvec`、`mepc`、`mcause`を追加した。CFU-PGでは圧縮命令を
+使用しないため、`mtvec`と`mepc`への書き込み時には下位2ビットをゼロにする。
+
+`mret`はMA段で確定するPCリダイレクトとして実装した。確定時にはPCを
+`mepc`へ変更し、IF、ID、EX段にある後続命令を破棄する。同時に`mstatus`を
+次のように更新する。
+
+```text
+MIE  <- MPIE
+MPIE <- 1
+MPP  <- 3（このCPUがMachine modeのみを実装するため）
+```
+
+連続する`csrw mepc`→`mret`を正しく実行するため、MA段にある未反映の
+`mepc`書き込み値を`mret`のリダイレクト先へ転送する。
+
+テスト用の`mret_test.S`では、戻り先ラベルを`mepc`へ設定し、
+`mstatus=0x00001880`としてから`mret`を実行する。戻り先では`mstatus`を
+読み出してCコードへ返す。`mret`直後のフォールスルー側は`1`を返すため、
+PCリダイレクトまたはパイプライン破棄が動かなければテストが失敗する。
+
+不一致時のシグネチャは次のとおり。
+
+```text
+0xdead000a = mtvec読み戻し不一致
+0xdead000b = mepc読み戻し不一致
+0xdead000c = mcause読み戻し不一致
+0xdead000d = CSRRCによるmstatus更新不一致
+0xdead000e = mretの戻り先またはmstatus更新不一致
+```
+
+### 確認結果
+
+逆アセンブルでCSRアクセスと`mret`を確認した。
+
+```asm
+csrw mtvec,a5
+csrr a4,mtvec
+csrw mepc,a4
+csrr a5,mepc
+csrw mcause,a4
+csrr a5,mcause
+csrc mstatus,a5
+csrw mepc,t0
+csrw mstatus,t0
+mret
+```
+
+`mret_test`は`0x00000284`、戻り先は`0x000002a8`に配置された。
+シミュレーションでは次のCSR書き込みを確認した。
+
+```text
+CSR_WE: addr=305 data=00000284
+CSR_WE: addr=341 data=00000100
+CSR_WE: addr=342 data=0000000b
+CSR_WE: addr=300 data=00000080
+CSR_WE: addr=341 data=000002a8
+CSR_WE: addr=300 data=00001880
+```
+
+`mret`後の`mstatus`は`0x00001888`となり、過去のテスト1からテスト5も
+含めて最終結果がPASSした。
+
+```text
+WE: addr=10000000 data=12345678
+MTKERNEL_SMOKE: PASS
+```
 
 ## テスト7: 同期例外によるトラップ往復
 
@@ -756,10 +834,10 @@ Verilatorで確認済みの構成をFPGA上で動作させる。
 
 ## 推奨する直近の作業
 
-次に着手するのはテスト6とする。
+次に着手するのはテスト7とする。
 
-1. `mtvec`、`mepc`、`mcause`をCSRファイルへ追加する。
-2. CSRの制御情報を`funct3`ベースへ整理する。
-3. `CSRRC`を含む必要なCSR命令を追加する。
-4. `mret`によるPC変更と`mstatus`更新を実装する。
-5. 最初は割込みを発生させず、同期的な単体テストで確認する。
+1. Machine modeの`ecall`をデコードする。
+2. トラップ入口で`mepc`、`mcause`、`mstatus`を更新する。
+3. `mtvec` Direct modeへPCを変更し、後続命令を破棄する。
+4. ハンドラで`mcause == 11`と`mepc`を確認する。
+5. `mepc`へ4を加え、テスト6で実装した`mret`で復帰する。
