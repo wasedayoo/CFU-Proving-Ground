@@ -684,41 +684,41 @@ PC          <- mtvec.BASE
 ELFでは次の配置となった。
 
 ```text
-ecall_test         = 0x00000404
-ecall_test_site    = 0x00000448
-ecall_trap_handler = 0x00000490
+ecall_test         = 0x000006bc
+ecall_test_site    = 0x00000700
+ecall_trap_handler = 0x00000748
 ```
 
 逆アセンブルで、`ecall`直後に検査用ストアがあり、ハンドラが`mepc`へ4を
 加えて`mret`していることを確認した。
 
 ```asm
-00000448 <ecall_test_site>:
-448: 00000073  ecall
-44c: 01de2023  sw t4,0(t3)
+00000700 <ecall_test_site>:
+700: 00000073  ecall
+704: 01de2023  sw t4,0(t3)
 
-00000490 <ecall_trap_handler>:
-49c: 342022f3  csrr t0,mcause
-4ac: 341022f3  csrr t0,mepc
-4bc: 300022f3  csrr t0,mstatus
-4f4: 341022f3  csrr t0,mepc
-4f8: 00428293  addi t0,t0,4
-4fc: 34129073  csrw mepc,t0
-50c: 30200073  mret
+00000748 <ecall_trap_handler>:
+754: 342022f3  csrr t0,mcause
+764: 341022f3  csrr t0,mepc
+774: 300022f3  csrr t0,mstatus
+7ac: 341022f3  csrr t0,mepc
+7b0: 00428293  addi t0,t0,4
+7b4: 34129073  csrw mepc,t0
+7c4: 30200073  mret
 ```
 
 シミュレーションでは次を確認した。
 
 ```text
-CSR_WE: addr=305 data=00000490
+CSR_WE: addr=305 data=00000748
 CSR_WE: addr=300 data=00000008
-TRAP: pc=00000448 cause=0000000b
-WE: addr=1000001c data=0000000b  // mcause
-WE: addr=10000018 data=00000448  // mepc
-WE: addr=10000014 data=00001880  // trap-entry mstatus
-WE: addr=10000010 data=00000000  // younger store was squashed
-CSR_WE: addr=341 data=0000044c
-WE: addr=1000000c data=00000001  // store after MRET
+TRAP: pc=00000700 cause=0000000b
+WE: addr=10000040 data=0000000b  // mcause
+WE: addr=1000003c data=00000700  // mepc
+WE: addr=10000038 data=00001880  // trap-entry mstatus
+WE: addr=10000034 data=00000000  // younger store was squashed
+CSR_WE: addr=341 data=00000704
+WE: addr=10000030 data=00000001  // store after MRET
 ```
 
 過去のテスト1からテスト6も含めて最終結果がPASSした。
@@ -728,7 +728,7 @@ WE: addr=10000000 data=12345678
 MTKERNEL_SMOKE: PASS
 ```
 
-## テスト8: タイマMMIOとMachine Timer Interrupt
+## テスト8: タイマMMIOとMachine Timer Interrupt（完了）
 
 ### 目的
 
@@ -767,6 +767,151 @@ MMIOアドレスは、μT-Kernel側の`sys_timer.h`とCFU-PG側のRTLで必ず�
 
 `wfi`は最初はNOP相当として実装してもよい。ただし、最終的には割込みまで
 実行を待機する動作を別途確認する。
+
+### 実装内容
+
+`main.v`へ64ビットの`mtime`と`mtimecmp`を持つ`machine_timer`を追加した。
+リセット時は`mtime=0`、`mtimecmp=0xffffffffffffffff`とし、起動直後の
+意図しない割込みを防ぐ。`mtime`は通常サイクルごとに1増加し、次の4つの
+32ビットMMIOアドレスからアクセスできる。
+
+```text
+0x6000bff8 = mtime[31:0]
+0x6000bffc = mtime[63:32]
+0x60004000 = mtimecmp[31:0]
+0x60004004 = mtimecmp[63:32]
+```
+
+アドレスはμT-Kernel側の`sys_timer.h`と一致している。タイマ領域を既存の
+VMEMおよび性能カウンタ領域より優先してデコードし、同じ書込みが複数の
+周辺回路へ届かないようにした。読出しは既存DMEMと同じ1サイクル同期応答と
+する。
+
+`mtime >= mtimecmp`をレベル型のタイマ割込み要求とし、`timer_irq_i`として
+CPUへ入力する。CPUでの受付条件は次のとおり。
+
+```text
+ExMa_v
+&& timer_irq_i
+&& mstatus.MIE
+&& mie.MTIE
+&& !ExMa_stall
+&& !w_stall
+```
+
+同期例外、`mret`、CSR書込みと同じサイクルでは割込みを遅延させる。特に
+CSR書込み中の受付を遅らせることで、完了扱いにしたCSR命令の更新がトラップ
+入口の更新優先度によって失われないようにした。
+
+タイマ割込みは命令に起因する同期例外ではないため、MA段の命令は通常どおり
+リタイアさせ、その命令の次に実行すべきPCを`mepc`へ保存する。分岐がtaken
+なら分岐先、それ以外なら`ExMa_pc+4`を再開PCとする。IF、ID、EX段の若い命令は
+破棄し、次をCSRへ保存して`mtvec`へ移動する。
+
+```text
+mepc         <- MA段命令の次に実行すべきPC
+mcause       <- 0x80000007
+mstatus.MPIE <- mstatus.MIE
+mstatus.MIE  <- 0
+mstatus.MPP  <- 3（Machine mode）
+PC           <- mtvec.BASE
+```
+
+テスト用の`timer_test.S`とC側検査では次を確認する。
+
+1. 連続した`mtime`読出しで値が増加する。
+2. 要求がpendingでも両許可ビットが0なら割込みを受けない。
+3. `mstatus.MIE`だけが1でも割込みを受けない。
+4. `mie.MTIE`だけが1でも割込みを受けない。
+5. `mtimecmp`を128 tick後へ設定し、両許可ビットを1にする。
+6. 待機ループ中にMachine Timer Interruptを受ける。
+7. ハンドラで`mcause`、`mepc`、`mstatus`をDMEMへ記録する。
+8. RV32で安全な順序で`mtimecmp`を最大値へ更新する。
+9. `mepc`を変更せず`mret`し、待機ループへ戻る。
+10. 割込み有効のまま短時間待ち、同じ割込みが再発しないことを確認する。
+
+`mtimecmp`の更新順序は次のとおり。
+
+```text
+mtimecmp[31:0]  <- 0xffffffff
+mtimecmp[63:32] <- 新しい上位値
+mtimecmp[31:0]  <- 新しい下位値
+```
+
+不一致時のシグネチャは次のとおり。
+
+```text
+0xdead0016 = mtimeが増加しない
+0xdead0017 = 両許可ビットが0なのに割込み発生
+0xdead0018 = mstatus.MIEだけで割込み発生
+0xdead0019 = mie.MTIEだけで割込み発生
+0xdead001a = タイマハンドラ到達回数不一致
+0xdead001b = mcause不一致
+0xdead001c = mepc不一致または非アライン
+0xdead001d = トラップ入口のmstatus不一致
+0xdead001e = mret後の処理へ未到達
+0xdead001f = mret後のmstatus不一致
+0xdead0020 = 割込み受付時刻がmtimecmpより前
+```
+
+### 確認結果
+
+ELFでは次の配置となった。
+
+```text
+timer_interrupt_test = 0x000007c8
+timer_wait_start     = 0x00000830
+timer_wait_end       = 0x00000844
+timer_trap_handler   = 0x00000884
+```
+
+逆アセンブルで、待機ループ、割込み要因解除、`mret`を確認した。
+
+```asm
+00000830 <timer_wait_start>:
+830: 00140413  addi s0,s0,1
+83c: 0002a303  lw   t1,0(t0)
+840: fe0308e3  beqz t1,830 <timer_wait_start>
+
+00000884 <timer_trap_handler>:
+890: 342022f3  csrr t0,mcause
+8a0: 341022f3  csrr t0,mepc
+8b0: 300022f3  csrr t0,mstatus
+8e0: 0062a023  sw   t1,0(t0)  // mtimecmp low = 0xffffffff
+8e4: 0062a223  sw   t1,4(t0)  // mtimecmp high = 0xffffffff
+8e8: 0062a023  sw   t1,0(t0)
+90c: 30200073  mret
+```
+
+シミュレーションでは次を確認した。
+
+```text
+CSR_WE: addr=305 data=00000884
+WE: addr=60004000 data=00000294
+CSR_WE: addr=304 data=00000080
+CSR_WE: addr=300 data=00000008
+TRAP: pc=00000838 cause=80000007
+WE: addr=10000028 data=80000007  // mcause
+WE: addr=10000024 data=00000838  // mepc
+WE: addr=10000020 data=00001880  // trap-entry mstatus
+WE: addr=1000000c data=000002a8  // mtime at trap (>= 0x294)
+WE: addr=60004000 data=ffffffff
+WE: addr=60004004 data=ffffffff
+WE: addr=1000002c data=00000001  // interrupt count
+WE: addr=1000001c data=00000001  // resumed after MRET
+```
+
+命令領域は2324 byte、初期化済みデータは8 byte、BSSは68 byteで、現在の
+IMEM 32 KiBおよびDMEM 16 KiBに収まっている。過去のテスト1からテスト7も
+含め、904サイクルで最終結果がPASSした。
+
+```text
+WE: addr=10000000 data=12345678
+MTKERNEL_SMOKE: PASS
+```
+
+このテストではポーリングループを使用した。`wfi`の実停止・割込み復帰動作は、
+フルカーネルの低消費電力待機経路を確認する段階で別途実装・検証する。
 
 ## テスト9: μT-Kernelの初期化完了
 
@@ -932,10 +1077,11 @@ Verilatorで確認済みの構成をFPGA上で動作させる。
 
 ## 推奨する直近の作業
 
-次に着手するのはテスト8とする。
+次に着手するのはテスト9とする。
 
-1. 64ビットの`mtime`と`mtimecmp`を実装する。
-2. `mtime >= mtimecmp`をMachine Timer Interrupt要求へ変換する。
-3. `mie.MTIE`と`mstatus.MIE`を含む割込み受付条件を実装する。
-4. 割込み時に`mcause=0x80000007`としてトラップ入口へ接続する。
-5. ハンドラで`mtimecmp`を更新し、`mret`で割り込まれた処理へ復帰する。
+1. CFU-PGのIMEM/DMEM配置に合うフルカーネル用リンカスクリプトを作る。
+2. スモークテスト用`reset_hdl.c`から、本来の`reset_hdl_perfect.c`相当の
+   初期化処理へ切り替える。
+3. `.data`のDMEM直接初期配置と`.bss`ゼロクリアをフルカーネルで確認する。
+4. 未実装UARTや不要なデバイスドライバを無効にした最小構成をビルドする。
+5. `main()`から`usermain()`へ到達したことをPASSシグネチャで確認する。

@@ -17,7 +17,7 @@ module top;
     reg [63:0] br_pred_cntr = 0;
     reg [63:0] br_misp_cntr = 0;
     always @(posedge clk) if (!m0.rst && !cpu_sim_fini && !m0.cpu.stall_i) begin
-        if (!m0.cpu.stall && m0.cpu.ExMa_v) minstret <= minstret + 1;
+        if (!m0.cpu.stall && m0.cpu.Ma_v) minstret <= minstret + 1;
         if (m0.cpu.ExMa_v && m0.cpu.ExMa_is_ctrl_tsfr)
           br_pred_cntr <= br_pred_cntr + 1;
         if (m0.cpu.ExMa_v && m0.cpu.ExMa_is_ctrl_tsfr && m0.cpu.Ma_br_misp)
@@ -68,7 +68,7 @@ module top;
                 end
             end
 
-            if (smoke_cycles == 1000) begin
+            if (smoke_cycles == 2000) begin
                 $display("MTKERNEL_SMOKE: TIMEOUT");
                 $fatal(1);
             end

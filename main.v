@@ -36,14 +36,28 @@ module main (
     wire [`DBUS_STRB_WIDTH-1:0] dbus_wstrb;
     wire [`DBUS_DATA_WIDTH-1:0] dbus_rdata;
 
-    reg rdata_sel = 0;
-    always @(posedge clk) rdata_sel <= dbus_addr[30];
-    assign dbus_rdata = rdata_sel ? {(`XLEN / 32){perf_rdata}} : dmem_rdata;
+    localparam [1:0] RDATA_DMEM  = 2'd0;
+    localparam [1:0] RDATA_PERF  = 2'd1;
+    localparam [1:0] RDATA_TIMER = 2'd2;
+
+    wire timer_addr_hit = (dbus_addr == 32'h6000bff8) ||
+                          (dbus_addr == 32'h6000bffc) ||
+                          (dbus_addr == 32'h60004000) ||
+                          (dbus_addr == 32'h60004004);
+    reg [1:0] rdata_sel = RDATA_DMEM;
+    always @(posedge clk) begin
+        rdata_sel <= timer_addr_hit ? RDATA_TIMER :
+                     dbus_addr[30]  ? RDATA_PERF : RDATA_DMEM;
+    end
+    assign dbus_rdata = (rdata_sel == RDATA_TIMER) ? timer_rdata :
+                        (rdata_sel == RDATA_PERF)  ? {(`XLEN / 32){perf_rdata}} :
+                                                    dmem_rdata;
 
     cpu cpu (
         .clk_i         (clk),         // input  wire
         .rst_i         (rst),         // input  wire
         .stall_i       (0),           // input  wire
+        .timer_irq_i   (timer_irq),   // input  wire
         .ibus_araddr_o (imem_raddr),  // output wire [`IBUS_ADDR_WIDTH-1:0]
         .ibus_rdata_i  (imem_rdata),  // input  wire [`IBUS_DATA_WIDTH-1:0]
         .dbus_addr_o   (dbus_addr),   // output wire [`DBUS_ADDR_WIDTH-1:0]
@@ -75,10 +89,26 @@ module main (
         .rdata_o (dmem_rdata)   // output reg  [DATA_WIDTH-1:0]
     );
 
+    wire timer_re = !dbus_we && timer_addr_hit;
+    wire timer_we =  dbus_we && timer_addr_hit;
+    wire [`XLEN-1:0] timer_rdata;
+    wire timer_irq;
+    machine_timer timer (
+        .clk_i   (clk),
+        .rst_i   (rst),
+        .re_i    (timer_re),
+        .we_i    (timer_we),
+        .addr_i  (dbus_addr),
+        .wdata_i (dbus_wdata),
+        .wstrb_i (dbus_wstrb),
+        .rdata_o (timer_rdata),
+        .irq_o   (timer_irq)
+    );
+
 `ifndef SYNTHESIS
     always @(posedge clk) if (dbus_we) $display("WE: addr=%x data=%x", dbus_addr, dbus_wdata);
 `endif
-    wire        vmem_we    = dbus_we & (dbus_addr[29]);
+    wire        vmem_we    = dbus_we & dbus_addr[29] & !timer_addr_hit;
     wire [15:0] vmem_addr  = dbus_addr[15:0];
     wire  [2:0] vmem_wdata = dbus_wdata[2:0];
     wire [15:0] vmem_raddr;
@@ -92,7 +122,7 @@ module main (
         .rdata_o (vmem_rdata_t)  // output wire [15:0]
     );
 
-    wire        perf_we    = dbus_we & (dbus_addr[30]);
+    wire        perf_we    = dbus_we & dbus_addr[30] & !timer_addr_hit;
     wire  [3:0] perf_addr  = dbus_addr[3:0];
     wire  [2:0] perf_wdata = dbus_wdata[2:0];
     wire [31:0] perf_rdata;
@@ -115,6 +145,85 @@ module main (
         .w_rdata    (vmem_rdata)   // input  wire [15:0]
     );
 
+endmodule
+
+module machine_timer (
+    input  wire                  clk_i,
+    input  wire                  rst_i,
+    input  wire                  re_i,
+    input  wire                  we_i,
+    input  wire [`XLEN-1:0]      addr_i,
+    input  wire [`XLEN-1:0]      wdata_i,
+    input  wire [`XBYTES-1:0]    wstrb_i,
+    output wire [`XLEN-1:0]      rdata_o,
+    output wire                  irq_o
+);
+    localparam [`XLEN-1:0] MTIME_L    = 32'h6000bff8;
+    localparam [`XLEN-1:0] MTIME_H    = 32'h6000bffc;
+    localparam [`XLEN-1:0] MTIMECMP_L = 32'h60004000;
+    localparam [`XLEN-1:0] MTIMECMP_H = 32'h60004004;
+
+    reg [63:0] mtime;
+    reg [63:0] mtimecmp;
+    reg [`XLEN-1:0] rdata;
+
+    function automatic [31:0] merge_word;
+        input [31:0] old_value;
+        input [31:0] new_value;
+        input [3:0]  byte_enable;
+        integer i;
+        begin
+            merge_word = old_value;
+
+            if (byte_enable[0])
+              merge_word[7:0] = new_value[7:0];
+            if (byte_enable[1])
+              merge_word[15:8] = new_value[15:8];
+            if (byte_enable[2])
+              merge_word[23:16] = new_value[23:16];
+            if (byte_enable[3])
+              merge_word[31:24] = new_value[31:24];
+        end
+    endfunction
+
+    always @(posedge clk_i) begin
+        if (rst_i) begin
+            mtime    <= 64'd0;
+            mtimecmp <= 64'hffffffffffffffff;
+            rdata    <= {`XLEN{1'b0}};
+        end else begin
+            case (we_i ? addr_i : {`XLEN{1'b0}})
+                MTIME_L: mtime <= {mtime[63:32],
+                                   merge_word(mtime[31:0], wdata_i[31:0], wstrb_i[3:0])};
+                MTIME_H: mtime <= {merge_word(mtime[63:32], wdata_i[31:0], wstrb_i[3:0]),
+                                   mtime[31:0]};
+                default: mtime <= mtime + 64'd1;
+            endcase
+
+            if (we_i) begin
+                case (addr_i)
+                    MTIMECMP_L: mtimecmp[31:0] <=
+                        merge_word(mtimecmp[31:0], wdata_i[31:0], wstrb_i[3:0]);
+                    MTIMECMP_H: mtimecmp[63:32] <=
+                        merge_word(mtimecmp[63:32], wdata_i[31:0], wstrb_i[3:0]);
+                    default: ;
+                endcase
+            end
+
+            if (re_i) begin
+                case (addr_i)
+                    MTIME_L:    rdata <= {{(`XLEN-32){1'b0}}, mtime[31:0]};
+                    MTIME_H:    rdata <= {{(`XLEN-32){1'b0}}, mtime[63:32]};
+                    MTIMECMP_L: rdata <= {{(`XLEN-32){1'b0}}, mtimecmp[31:0]};
+                    MTIMECMP_H: rdata <= {{(`XLEN-32){1'b0}}, mtimecmp[63:32]};
+                    default:    rdata <= {`XLEN{1'b0}};
+                endcase
+            end
+        end
+    end
+
+    assign rdata_o = rdata;
+    assign irq_o = (mtime >= mtimecmp);
 endmodule
 
 module m_imem (

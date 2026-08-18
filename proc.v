@@ -17,6 +17,7 @@ module cpu (
     input  wire                        clk_i,
     input  wire                        rst_i,
     input  wire                        stall_i,
+    input  wire                        timer_irq_i,
     output wire [`IBUS_ADDR_WIDTH-1:0] ibus_araddr_o,
     input  wire [`IBUS_DATA_WIDTH-1:0] ibus_rdata_i,
     output wire [`DBUS_ADDR_WIDTH-1:0] dbus_addr_o,
@@ -114,12 +115,18 @@ module cpu (
     wire Ma_br_tkn = (ExMa_v && ExMa_br_tkn);
     wire Ma_mret   = (ExMa_v && ExMa_is_mret);
     wire Ma_trap   = (ExMa_v && ExMa_is_ecall);
+    wire [`XLEN-1:0] Ma_retire_next_pc =
+        ExMa_br_tkn ? ExMa_br_tkn_pc : ExMa_pc + 4;
+    wire Ma_timer_irq = ExMa_v && timer_irq_i && csr_timer_irq_enabled &&
+                        !ExMa_stall && !w_stall && !Ma_trap && !Ma_mret &&
+                        !ExMa_csr_we;
     wire        Ma_br_misp     = (rst) ? 1 :
                                  (ExMa_v && ExMa_is_ctrl_tsfr &&
                                  ((Ma_br_tkn) ? ExMa_br_misp_rslt1 : ExMa_br_misp_rslt2));
-    wire        Ma_pc_redirect = Ma_br_misp || Ma_mret || Ma_trap;
+    wire        Ma_pc_redirect = Ma_br_misp || Ma_mret || Ma_trap || Ma_timer_irq;
     wire [`XLEN-1:0] Ma_redirect_pc  = (rst)         ? `RESET_VECTOR :
                                        (Ma_trap)     ? csr_mtvec :
+                                       (Ma_timer_irq)? csr_mtvec :
                                        (Ma_mret)     ? ExMa_mret_pc :
                                        (ExMa_br_tkn) ? ExMa_br_tkn_pc : ExMa_pc+4;
 
@@ -322,6 +329,7 @@ module cpu (
     wire [ `XLEN-1:0] csr_rdata;
     wire [ `XLEN-1:0] csr_mepc;
     wire [ `XLEN-1:0] csr_mtvec;
+    wire              csr_timer_irq_enabled;
     wire              ExMa_csr_forward = ExMa_v && ExMa_csr_we &&
                                              (ExMa_csr_addr == Ex_csr_addr);
     wire [ `XLEN-1:0] Ex_csr_rdata =
@@ -349,13 +357,16 @@ module cpu (
         .rdata_o(csr_rdata),
         .mepc_o (csr_mepc),
         .mtvec_o(csr_mtvec),
+        .timer_irq_enabled_o(csr_timer_irq_enabled),
         .we_i   (ExMa_v && ExMa_csr_we && !ExMa_stall && !w_stall),
         .waddr_i(ExMa_csr_addr),
         .wdata_i(ExMa_csr_wdata),
         .mret_i (Ma_mret && !ExMa_stall && !w_stall),
-        .trap_i (Ma_trap && !ExMa_stall && !w_stall),
-        .trap_pc_i(ExMa_pc),
-        .trap_cause_i({{(`XLEN-4){1'b0}}, 4'd11})
+        .trap_i ((Ma_trap || Ma_timer_irq) && !ExMa_stall && !w_stall),
+        .trap_pc_i(Ma_timer_irq ? Ma_retire_next_pc : ExMa_pc),
+        .trap_cause_i(Ma_timer_irq ?
+            {1'b1, {(`XLEN-4){1'b0}}, 3'd7} :
+            {{(`XLEN-4){1'b0}}, 4'd11})
     );
 
     ///// arithmetic logic unit
@@ -1169,6 +1180,7 @@ module csr_file (
     output reg  [`XLEN-1:0] rdata_o,
     output wire [`XLEN-1:0] mepc_o,
     output wire [`XLEN-1:0] mtvec_o,
+    output wire             timer_irq_enabled_o,
 
     input  wire             we_i,
     input  wire [     11:0] waddr_i,
@@ -1193,6 +1205,7 @@ module csr_file (
 
     assign mepc_o = mepc;
     assign mtvec_o = mtvec;
+    assign timer_irq_enabled_o = mstatus[3] && mie[7];
 
     always @(*) begin
         case (raddr_i)
