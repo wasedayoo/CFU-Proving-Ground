@@ -25,13 +25,11 @@ SECTIONS
 
     .rodata : {
         . = ALIGN(4);
-        __rodata_start = .;
         *(.rodata)
         *(.rodata.*)
         *(.srodata)
         *(.srodata.*)
         . = ALIGN(4);
-        __rodata_end = .;
     } > dmem
 
     .data : {
@@ -45,10 +43,14 @@ SECTIONS
         . = ALIGN(4);
         __data_end = .;
     } > dmem
+    __data_org = ADDR(.data);
 
     .bss (NOLOAD) : {
         . = ALIGN(4);
         __bss_start = .;
+        PROVIDE(__noinit_start = .);
+        *(.noinit)
+        PROVIDE(__noinit_end = .);
         *(.bss)
         *(.bss.*)
         *(.sbss)
@@ -56,7 +58,11 @@ SECTIONS
         *(COMMON)
         . = ALIGN(4);
         __bss_end = .;
+        __end = .;
     } > dmem
 
     _stack_top = ORIGIN(dmem) + LENGTH(dmem);
+
+    ASSERT(SIZEOF(.text) <= LENGTH(imem), "Test 9 IMEM overflow")
+    ASSERT(__bss_end <= _stack_top, "Test 9 DMEM overflow")
 }

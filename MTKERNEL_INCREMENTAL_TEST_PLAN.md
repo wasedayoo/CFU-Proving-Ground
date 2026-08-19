@@ -39,13 +39,13 @@ make mtkernel-smoke-run
 このターゲットは、次の処理を順番に行う。
 
 ```text
-startup.Sとreset_hdl.cをコンパイル・リンク
+startup.Sとreset_hdl_test.cをコンパイル・リンク
     ↓
 main.elfからmemi.txtとmemd.txtを生成
     ↓
 Verilatorシミュレータをビルド
     ↓
-obj_dir/topを実行
+obj_dir_mtkernel_smoke/topを実行
     ↓
 DMEMへの書き込みを検査
 ```
@@ -913,7 +913,7 @@ MTKERNEL_SMOKE: PASS
 このテストではポーリングループを使用した。`wfi`の実停止・割込み復帰動作は、
 フルカーネルの低消費電力待機経路を確認する段階で別途実装・検証する。
 
-## テスト9: μT-Kernelの初期化完了
+## テスト9: μT-Kernelの初期化完了（完了）
 
 ### 目的
 
@@ -947,9 +947,92 @@ MTKERNEL_SMOKE: PASS
 - 例外ハンドラへ落ちずに`usermain()`へ到達する。
 - `usermain()`到達シグネチャを確認できる。
 
-既存のμT-Kernelビルドは32 KiBのIMEMを超える可能性が高い。Verilatorでの
-初期確認ではIMEMを128 KiB、DMEMを64 KiB程度へ一時的に拡張し、機能確認後に
-最適化する。
+フルカーネルを今後も実行できるよう、Test 9以降はIMEMを128 KiB、DMEMを
+64 KiBとする。この容量をCFU-PGの標準構成とし、Test 9専用の条件分岐には
+しない。
+
+### 実装内容
+
+CFU-PG側へ`mtkernel-test9`、`mtkernel-test9-build`、`mtkernel-test9-run`を追加し、
+μT-Kernel本体を次の条件で直接ビルドできるようにした。
+
+```text
+-Os -std=gnu17 -march=rv32im_zicsr -mabi=ilp32
+-ffreestanding -fno-builtin -nostdlib -mno-relax
+```
+
+`gnu17`は、μT-Kernelが汎用関数ポインタ`FP`に旧形式の空引数リストを使用して
+おり、GCC 15の既定C23モードでは引数付き呼出しがエラーになるため明示した。
+
+Test 9専用リンカスクリプト`app/mtkernel_test9.ld`を追加した。IMEMを
+`0x00000000`から128 KiB、DMEMを`0x10000000`から64 KiBとし、`.rodata`、
+`.data`、`.bss`、カーネルヒープ、例外スタック、初期タスクスタックをDMEMへ
+配置する。`.data`のロードアドレスと実行アドレスを同じにして`memd.txt`へ
+直接初期配置し、`.bss`は本来の`reset_hdl.c`でゼロクリアする。テスト1から
+テスト8まで使用した検査用ハンドラは`reset_hdl_test.c`として残す。
+
+Test 9構成では、未実装UARTへアクセスするT-Monitorとシステムメッセージ、
+デバッガ支援、物理タイマAPI、デバイスマネージャ、シャットダウン処理を無効に
+した。通常構成の設定値は変更せず、`CFU_MTKERNEL_TEST9`定義時だけ切り替える。
+システムタイマ初期化はTest 8で追加したMachine Timer MMIOを使用する。
+
+`usermain()`へ到達するまでの経路は次のとおり。
+
+```text
+_start
+  -> Reset_Handler
+  -> knl_startup_hw（mtvec設定）
+  -> .data初期化、.bssゼロクリア、カーネルヒープ範囲設定
+  -> main
+  -> メモリアロケータ、割込み、カーネルオブジェクト、タイマ初期化
+  -> 初期タスク生成・開始
+  -> knl_dispatch_to_schedtsk
+  -> mretによる初期タスク開始
+  -> init_task_main
+  -> usermain
+```
+
+Test 9用`usermain()`では、非ゼロ初期値を持つ`.data`変数と`.bss`変数を確認して
+から`0x12345679`を`0x10000000`へ書く。失敗値は次のとおり。
+
+```text
+0xdead0091 = .dataの非ゼロ初期値が不一致
+0xdead0092 = .bssがゼロクリアされていない
+```
+
+### 確認結果
+
+ELFはRV32、エントリポイント`0x00000000`で生成され、主なシンボルは次の配置と
+なった。
+
+```text
+_start                    = 0x00000000
+knl_dispatch_to_schedtsk  = 0x00000024
+Reset_Handler             = 0x000004f8
+main                      = 0x00001438
+usermain                  = 0x000014d4
+cfu_test9_status          = 0x10000000
+cfu_test9_data            = 0x1000001c
+__bss_start               = 0x10000020
+__bss_end                 = 0x100022d0
+_stack_top                = 0x10010000
+```
+
+セクション使用量は`.text` 5568 byte、`.test_status` 4 byte、`.rodata` 24 byte、
+`.data` 4 byte、`.bss` 8880 byteであり、設定したIMEM 128 KiBとDMEM 64 KiBに
+収まった。逆アセンブルでは初期タスクの復帰PCが`mepc`へ設定され、`mret`後に
+`init_task_main`から`usermain`が呼ばれることを確認した。
+
+Verilatorでは例外ハンドラへ落ちず、Test 9の到達シグネチャを確認した。
+
+```text
+MTKERNEL_TEST9: PASS
+mcycle   = 13943
+minstret = 13262
+```
+
+テスト1からテスト8のスモークテストも再実行し、従来どおり904サイクル、
+660命令退役でPASSした。
 
 ## テスト10: 単一タスクの起動と終了
 
@@ -1077,11 +1160,9 @@ Verilatorで確認済みの構成をFPGA上で動作させる。
 
 ## 推奨する直近の作業
 
-次に着手するのはテスト9とする。
+次に着手するのはテスト10とする。
 
-1. CFU-PGのIMEM/DMEM配置に合うフルカーネル用リンカスクリプトを作る。
-2. スモークテスト用`reset_hdl.c`から、本来の`reset_hdl_perfect.c`相当の
-   初期化処理へ切り替える。
-3. `.data`のDMEM直接初期配置と`.bss`ゼロクリアをフルカーネルで確認する。
-4. 未実装UARTや不要なデバイスドライバを無効にした最小構成をビルドする。
-5. `main()`から`usermain()`へ到達したことをPASSシグネチャで確認する。
+1. Test 9用`usermain()`からユーザータスクを1個だけ生成する構成へ進める。
+2. `tk_cre_tsk()`と`tk_sta_tsk()`の戻り値をシグネチャ領域へ記録する。
+3. ユーザータスク入口、スタック範囲、関数呼出しを確認する。
+4. タイマ待ちはまだ使用せず、最後に`tk_ext_tsk()`でタスクを終了する。

@@ -76,6 +76,33 @@ module top;
     end
 `endif
 
+`ifdef MTKERNEL_TEST9
+    reg [31:0] test9_cycles = 0;
+    always @(posedge clk) begin
+        if (!m0.rst) begin
+            test9_cycles <= test9_cycles + 1;
+
+            if (m0.cpu.dbus_wvalid_o && m0.cpu.dbus_addr_o == 32'h10000000) begin
+                if (m0.cpu.dbus_wdata_o[31:0] == 32'h12345679) begin
+                    $display("MTKERNEL_TEST9: PASS");
+                    $finish;
+                end else begin
+                    $display("MTKERNEL_TEST9: FAIL (data=%08x)",
+                             m0.cpu.dbus_wdata_o[31:0]);
+                    $fatal(1);
+                end
+            end
+
+            if (test9_cycles == 500000) begin
+                $display("MTKERNEL_TEST9: TIMEOUT pc=%08x mepc=%08x mcause=%08x mstatus=%08x",
+                         m0.cpu.ExMa_pc, m0.cpu.csr.mepc,
+                         m0.cpu.csr.mcause, m0.cpu.csr.mstatus);
+                $fatal(1);
+            end
+        end
+    end
+`endif
+
     final begin
         $write("\n");
         $write("===> mcycle                                 : %10d\n", mcycle);
@@ -87,30 +114,26 @@ module top;
     end
 
 //==============================================================================
-// Trace Dump
+// Retired instruction trace for the full micro T-Kernel test
 //------------------------------------------------------------------------------
-/*
-    integer i, j, fp;
+`ifdef MTKERNEL_TEST9
+    integer retire_trace_fp;
     initial begin
-        fp=$fopen("trace.txt","w");
-        if(fp == 0)begin
-            $display("File_Open_Error_!!!!!");
-            $finish();
+        retire_trace_fp = $fopen("build/mtkernel-test9.trace", "w");
+        if (retire_trace_fp == 0) begin
+            $fatal(1, "MTKERNEL_TEST9: could not open retired instruction trace");
+        end
+        $fwrite(retire_trace_fp, "# retire pc       insn\n");
+    end
+
+    always @(posedge clk) begin
+        if (!m0.rst && !cpu_sim_fini && !m0.cpu.stall_i &&
+            !m0.cpu.stall && m0.cpu.Ma_v) begin
+            $fwrite(retire_trace_fp, "%08d %08x %08x\n",
+                    minstret + 64'd1, m0.cpu.ExMa_pc, m0.cpu.ExMa_ir);
         end
     end
-    always @(posedge clk) if (minstret < 32'h10000)begin
-        if (!m0.rst && !cpu_sim_fini && !m0.cpu.stall && m0.cpu.MaWb_v && !m0.cpu.stall_i) begin
-            $fwrite(fp, "%08d %08x %08x\n", minstret, m0.cpu.MaWb_pc, m0.cpu.MaWb_ir);
-            for(i=0;i<4;i=i+1) begin
-                for(j=0;j<8;j=j+1) begin
-                    $fwrite(fp, "%08x",m0.cpu.xreg.ram[i*8+j]);
-                    if(j==7)    $fwrite(fp, "\n");
-                    else        $fwrite(fp, " ");
-                end
-            end
-        end
-    end
-*/
+`endif
 
 //==============================================================================
 // Debug Dump

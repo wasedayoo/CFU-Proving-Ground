@@ -1,5 +1,5 @@
 build/
-obj_dir/
+obj_dir*/
 .Xil/
 vivado*
 memd.txt

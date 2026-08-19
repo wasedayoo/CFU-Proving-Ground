@@ -33,7 +33,8 @@ PART_cmod_a7  := xc7a35ticpg236-1L
 HLS_PART := $(or $(PART_$(TARGET)),$(error Unsupported TARGET: $(TARGET)))
 HLS_CFG  := constr/cfu_hls.cfg
 
-.PHONY: build prog run clean mtkernel-smoke mtkernel-smoke-build mtkernel-smoke-run
+.PHONY: build prog run clean mtkernel-smoke mtkernel-smoke-build mtkernel-smoke-run \
+	mtkernel-test9 mtkernel-test9-build mtkernel-test9-run
 all: prog build
 
 build:
@@ -45,7 +46,7 @@ dmem_size =	$(shell grep -oP "\`define\s+DMEM_SIZE\s+\(\K[^)]*" config.vh | bc)
 
 MTKERNEL_DIR ?= ../mtkernel_cfu
 MTKERNEL_STARTUP := $(MTKERNEL_DIR)/kernel/sysdepend/cpu/core/riscv/startup.S
-MTKERNEL_RESET   := $(MTKERNEL_DIR)/kernel/sysdepend/cpu/core/riscv/reset_hdl.c
+MTKERNEL_RESET_TEST := $(MTKERNEL_DIR)/kernel/sysdepend/cpu/core/riscv/reset_hdl_test.c
 MTKERNEL_MRET_TEST := $(MTKERNEL_DIR)/kernel/sysdepend/cpu/core/riscv/mret_test.S
 MTKERNEL_ECALL_TEST := $(MTKERNEL_DIR)/kernel/sysdepend/cpu/core/riscv/ecall_test.S
 MTKERNEL_TIMER_TEST := $(MTKERNEL_DIR)/kernel/sysdepend/cpu/core/riscv/timer_test.S
@@ -56,16 +57,55 @@ mtkernel-smoke:
 		-D_IOTE_RISCV_ -I$(MTKERNEL_DIR)/include \
 		-Wl,--build-id=none -Wl,-Map,build/mtkernel-smoke.map \
 		-Tapp/mtkernel_smoke.ld -o build/main.elf \
-		$(MTKERNEL_STARTUP) $(MTKERNEL_RESET) $(MTKERNEL_MRET_TEST) \
+		$(MTKERNEL_STARTUP) $(MTKERNEL_RESET_TEST) $(MTKERNEL_MRET_TEST) \
 		$(MTKERNEL_ECALL_TEST) $(MTKERNEL_TIMER_TEST)
 	$(MAKE) initf
 
 mtkernel-smoke-build: mtkernel-smoke
 	CCACHE_DISABLE=1 $(RTLSIM) --binary --trace --top-module top -DMTKERNEL_SMOKE \
+		--Mdir obj_dir_mtkernel_smoke \
 		--Wno-WIDTHTRUNC --Wno-WIDTHEXPAND -o top *.v
 
 mtkernel-smoke-run: mtkernel-smoke-build
-	./obj_dir/top
+	./obj_dir_mtkernel_smoke/top
+
+MTKERNEL_TEST9_C_SRCS := \
+	$(wildcard $(MTKERNEL_DIR)/kernel/tkernel/*.c) \
+	$(wildcard $(MTKERNEL_DIR)/kernel/tstdlib/*.c) \
+	$(MTKERNEL_DIR)/kernel/sysinit/sysinit.c \
+	$(MTKERNEL_DIR)/kernel/inittask/inittask.c \
+	$(MTKERNEL_DIR)/kernel/usermain/usermain.c \
+	$(wildcard $(MTKERNEL_DIR)/kernel/sysdepend/iote_riscv/*.c) \
+	$(MTKERNEL_DIR)/kernel/sysdepend/cpu/core/riscv/cpu_cntl.c \
+	$(MTKERNEL_DIR)/kernel/sysdepend/cpu/core/riscv/exc_hdr.c \
+	$(MTKERNEL_DIR)/kernel/sysdepend/cpu/core/riscv/interrupt.c
+MTKERNEL_TEST9_ASM_SRCS := \
+	$(MTKERNEL_DIR)/kernel/sysdepend/cpu/core/riscv/startup.S \
+	$(MTKERNEL_DIR)/kernel/sysdepend/cpu/core/riscv/dispatch.S
+
+mtkernel-test9:
+	mkdir -p build
+	$(GCC) -Os -std=gnu17 -march=rv32im_zicsr -mabi=ilp32 -ffreestanding -fno-builtin \
+		-ffunction-sections -fdata-sections -nostdlib -mno-relax \
+		-D_IOTE_RISCV_ -DCFU_MTKERNEL_TEST9 \
+		-I$(MTKERNEL_DIR)/include -I$(MTKERNEL_DIR)/config \
+		-I$(MTKERNEL_DIR)/kernel/knlinc -I$(MTKERNEL_DIR)/kernel/sysdepend \
+		-Wl,--gc-sections -Wl,--build-id=none -Wl,-Map,build/mtkernel-test9.map \
+		-Tapp/mtkernel_test9.ld -o build/main.elf \
+		$(MTKERNEL_TEST9_ASM_SRCS) \
+		$(MTKERNEL_DIR)/kernel/sysdepend/cpu/core/riscv/reset_hdl.c \
+		$(MTKERNEL_TEST9_C_SRCS) -lc -lgcc
+	$(MAKE) initf
+
+mtkernel-test9-build: mtkernel-test9
+	CCACHE_DISABLE=1 $(RTLSIM) --binary --trace --top-module top \
+		-DMTKERNEL_TEST9 --Mdir obj_dir_mtkernel_test9 \
+		--Wno-WIDTHTRUNC --Wno-WIDTHEXPAND -o top *.v
+
+mtkernel-test9-run: mtkernel-test9-build
+	./obj_dir_mtkernel_test9/top
+	awk -f scripts/annotate_retire_trace.awk build/main.dump \
+		build/mtkernel-test9.trace > build/mtkernel-test9.trace.asm
 
 
 
