@@ -568,14 +568,15 @@ module alu (
     wire        [32:0] arith_shift_32_tmp = right_shifter_src1_32 >>> shamt_32;
     wire        [31:0] right_shift_32 = arith_shift_32_tmp[31:0];
 
-    wire signed [              `XLEN:0] right_shifter_src1;
+    wire signed [          `XLEN:0] right_shifter_src1;
     wire        [$clog2(`XLEN)-1:0] shamt = src2_i[$clog2(`XLEN)-1:0];
-    wire        [              `XLEN:0] arith_shift_tmp;
+    wire        [          `XLEN:0] arith_shift_tmp;
     assign right_shifter_src1 = {w_signed && src1_i[`XLEN-1], src1_i};
     assign arith_shift_tmp = right_shifter_src1 >>> shamt;
 
     wire [`XLEN-1:0] left_shifter_rslt =
-        alu_ctrl_i[`ALU_CTRL_IS_SHIFT_LEFT] ? (w_is_w ? {32'b0, left_shift_32} : src1_i << shamt) : 0;
+        alu_ctrl_i[`ALU_CTRL_IS_SHIFT_LEFT] ?
+        (w_is_w ? {32'b0, left_shift_32} : src1_i << shamt) : 0;
     wire [`XLEN-1:0] right_shifter_rslt =
         alu_ctrl_i[`ALU_CTRL_IS_SHIFT_RIGHT] ?
         (w_is_w ? {32'b0, right_shift_32} : arith_shift_tmp[`XLEN-1:0]) : 0;
@@ -639,7 +640,7 @@ module divider (
     input  wire [          `XLEN-1:0] src1_i,
     input  wire [          `XLEN-1:0] src2_i,
     output wire                       stall_o,
-    output wire [`XLEN-1:0] rslt_o
+    output wire [          `XLEN-1:0] rslt_o
 );
 
     localparam DIV_IDLE  = 2'd0;
@@ -650,15 +651,15 @@ module divider (
     reg [1:0] state = DIV_IDLE;
     assign stall_o = (w_state != DIV_IDLE);
 
-    reg        is_dividend_neg;
-    reg        is_divisor_neg;
+    reg             is_dividend_neg;
+    reg             is_divisor_neg;
     reg [`XLEN-1:0] remainder;
     reg [`XLEN-1:0] divisor;
     reg [`XLEN-1:0] quotient;
-    reg        is_div_rslt_neg;
-    reg        is_rem_rslt_neg;
-    reg        is_rem;
-    reg        is_w;
+    reg             is_div_rslt_neg;
+    reg             is_rem_rslt_neg;
+    reg             is_rem;
+    reg             is_w;
     reg [$clog2(`XLEN)-1:0] cntr;
 
     wire [`XLEN-1:0] uintx_remainder = is_dividend_neg ? ~remainder + 1'b1 : remainder;
@@ -901,9 +902,9 @@ module store_unit (
     wire w_sd = lsu_ctrl_i[`LSU_CTRL_IS_DOUBLEWORD];
     wire invalid_size = !(w_sb || w_sh || w_sw || w_sd);
 
-    localparam [`XBYTES-1:0] BYTE_MASK = {`XBYTES{1'b1}} >> (`XBYTES - 1);
-    localparam [`XBYTES-1:0] HALFWORD_MASK = {`XBYTES{1'b1}} >> (`XBYTES - 2);
-    localparam [`XBYTES-1:0] WORD_MASK = {`XBYTES{1'b1}} >> (`XBYTES - 4);
+    localparam [`XBYTES-1:0] BYTE_MASK       = {`XBYTES{1'b1}} >> (`XBYTES - 1);
+    localparam [`XBYTES-1:0] HALFWORD_MASK   = {`XBYTES{1'b1}} >> (`XBYTES - 2);
+    localparam [`XBYTES-1:0] WORD_MASK       = {`XBYTES{1'b1}} >> (`XBYTES - 4);
     localparam [`XBYTES-1:0] DOUBLEWORD_MASK = {`XBYTES{1'b1}};
 
     wire [`XLEN-1:0] byte_data         = {`XBYTES{src2_i[7:0]}};
@@ -928,9 +929,9 @@ endmodule
 /******************************************************************************************/
 module load_unit (
     input  wire [`LSU_CTRL_WIDTH-1:0] lsu_ctrl_i,
-    input  wire [`DBUS_OFFSET_W-1:0] dbus_offset_i,
-    input  wire [`XLEN-1:0] dbus_rdata_i,
-    output wire [`XLEN-1:0] rslt_o
+    input  wire [ `DBUS_OFFSET_W-1:0] dbus_offset_i,
+    input  wire [          `XLEN-1:0] dbus_rdata_i,
+    output wire [          `XLEN-1:0] rslt_o
 );
 
     wire w_lb     = lsu_ctrl_i[`LSU_CTRL_IS_BYTE];
@@ -941,7 +942,7 @@ module load_unit (
     wire w_load   = lsu_ctrl_i[`LSU_CTRL_IS_LOAD];
     wire invalid_size = !(w_lb || w_lh || w_lw || w_ld);
 
-    wire [`XLEN-1:0] d_shifted     = dbus_rdata_i >> {dbus_offset_i, 3'b0};  // data
+    wire [`XLEN-1:0] d_shifted     = dbus_rdata_i >> {dbus_offset_i, 3'b0};
     wire      [ 7:0] byte_data     = d_shifted[7:0];
     wire      [15:0] halfword_data = d_shifted[15:0];
     wire      [31:0] word_data     = d_shifted[31:0];
