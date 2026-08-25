@@ -75,9 +75,6 @@ module main (
         .rdata_o (dmem_rdata)   // output reg  [DATA_WIDTH-1:0]
     );
 
-`ifndef SYNTHESIS
-    always @(posedge clk) if (dbus_we) $display("WE: addr=%x data=%x", dbus_addr, dbus_wdata);
-`endif
     wire        vmem_we    = dbus_we & (dbus_addr[29]);
     wire [15:0] vmem_addr  = dbus_addr[15:0];
     wire  [2:0] vmem_wdata = dbus_wdata[2:0];

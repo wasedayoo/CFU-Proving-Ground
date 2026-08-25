@@ -35,6 +35,9 @@
 
 `endif  // CONFIG_VH_
 
+// tohost
+// `define TOHOST_ADDR 'h40008000 // this is not used(2026/07/29)
+
 // cpu
 `define RV32
 

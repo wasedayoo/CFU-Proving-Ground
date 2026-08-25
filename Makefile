@@ -1,8 +1,6 @@
 # CFU Proving Ground since 2025-02    Copyright(c) 2025 Archlab. Science Tokyo
 # Released under the MIT license https://opensource.org/licenses/mit
 
-
-
 IS_RV64 := $(shell grep -E "^\`define\s+RV64" config.vh | wc -l)
 
 ifeq ($(strip $(IS_RV64)),1)
@@ -42,9 +40,6 @@ build:
 
 imem_size =	$(shell grep -oP "\`define\s+IMEM_SIZE\s+\(\K[^)]*" config.vh | bc)
 dmem_size =	$(shell grep -oP "\`define\s+DMEM_SIZE\s+\(\K[^)]*" config.vh | bc)
-
-
-
 
 ifeq ($(strip $(IS_RV64)),1)
 prog:
