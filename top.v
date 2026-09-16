@@ -138,6 +138,58 @@ module top;
     end
 `endif
 
+`ifdef MTKERNEL_TEST12
+    localparam [31:0] TEST12_PUTCHAR_ADDR = 32'h80000000;
+    localparam [31:0] TEST12_FNV1A_OFFSET = 32'h811c9dc5;
+    localparam [31:0] TEST12_FNV1A_PRIME  = 32'h01000193;
+    reg [31:0] test12_cycles = 0;
+    reg [31:0] test12_timer_irqs = 0;
+    reg [31:0] test12_console_count = 0;
+    reg [31:0] test12_console_hash = TEST12_FNV1A_OFFSET;
+    always @(posedge clk) begin
+        if (!m0.rst) begin
+            test12_cycles <= test12_cycles + 1;
+
+            if (m0.cpu.Ma_timer_irq) begin
+                test12_timer_irqs <= test12_timer_irqs + 1;
+            end
+
+            if (m0.cpu.dbus_wvalid_o &&
+                m0.cpu.dbus_addr_o == TEST12_PUTCHAR_ADDR) begin
+                test12_console_count <= test12_console_count + 1;
+                test12_console_hash <=
+                    (test12_console_hash ^ {24'd0, m0.cpu.dbus_wdata_o[7:0]}) *
+                    TEST12_FNV1A_PRIME;
+            end
+
+            if (m0.cpu.dbus_wvalid_o && m0.cpu.dbus_addr_o == 32'h10000000) begin
+                if (m0.cpu.dbus_wdata_o[31:0] == 32'h1234567c &&
+                    test12_timer_irqs >= 10 &&
+                    test12_console_count == 157 &&
+                    test12_console_hash == 32'h7444ff7b) begin
+                    $display("MTKERNEL_TEST12: PASS (timer_irqs=%0d chars=%0d hash=%08x)",
+                             test12_timer_irqs, test12_console_count,
+                             test12_console_hash);
+                    $finish;
+                end else begin
+                    $display("MTKERNEL_TEST12: FAIL (data=%08x timer_irqs=%0d chars=%0d hash=%08x)",
+                             m0.cpu.dbus_wdata_o[31:0], test12_timer_irqs,
+                             test12_console_count, test12_console_hash);
+                    $fatal(1);
+                end
+            end
+
+            if (test12_cycles == 750000) begin
+                $display("MTKERNEL_TEST12: TIMEOUT pc=%08x mepc=%08x mcause=%08x timer_irqs=%0d chars=%0d hash=%08x",
+                         m0.cpu.ExMa_pc, m0.cpu.csr.mepc, m0.cpu.csr.mcause,
+                         test12_timer_irqs, test12_console_count,
+                         test12_console_hash);
+                $fatal(1);
+            end
+        end
+    end
+`endif
+
     final begin
         $write("\n");
         $write("===> mcycle                                 : %10d\n", mcycle);
@@ -169,6 +221,15 @@ module top;
         end
         $fwrite(retire_trace_fp, "# retire pc       insn\n");
     end
+`elsif MTKERNEL_TEST12
+    integer retire_trace_fp;
+    initial begin
+        retire_trace_fp = $fopen("build/mtkernel-test12.trace", "w");
+        if (retire_trace_fp == 0) begin
+            $fatal(1, "MTKERNEL_TEST12: could not open retired instruction trace");
+        end
+        $fwrite(retire_trace_fp, "# retire pc       insn\n");
+    end
 `endif
 
 `ifdef MTKERNEL_TEST9
@@ -180,6 +241,14 @@ module top;
         end
     end
 `elsif MTKERNEL_TEST11
+    always @(posedge clk) begin
+        if (!m0.rst && !cpu_sim_fini && !m0.cpu.stall_i &&
+            !m0.cpu.stall && m0.cpu.Ma_v) begin
+            $fwrite(retire_trace_fp, "%08d %08x %08x\n",
+                    minstret + 64'd1, m0.cpu.ExMa_pc, m0.cpu.ExMa_ir);
+        end
+    end
+`elsif MTKERNEL_TEST12
     always @(posedge clk) begin
         if (!m0.rst && !cpu_sim_fini && !m0.cpu.stall_i &&
             !m0.cpu.stall && m0.cpu.Ma_v) begin

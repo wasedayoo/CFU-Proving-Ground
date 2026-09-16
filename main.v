@@ -106,8 +106,14 @@ module main (
     );
 
 `ifndef SYNTHESIS
+`ifndef MTKERNEL
 `ifndef MTKERNEL_TEST9
+`ifndef MTKERNEL_TEST11
+`ifndef MTKERNEL_TEST12
     always @(posedge clk) if (dbus_we) $display("WE: addr=%x data=%x", dbus_addr, dbus_wdata);
+`endif
+`endif
+`endif
 `endif
 `endif
     wire        vmem_we    = dbus_we & dbus_addr[29] & !timer_addr_hit;

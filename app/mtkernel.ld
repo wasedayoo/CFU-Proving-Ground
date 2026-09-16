@@ -63,6 +63,6 @@ SECTIONS
 
     _stack_top = ORIGIN(dmem) + LENGTH(dmem);
 
-    ASSERT(SIZEOF(.text) <= LENGTH(imem), "Test 9 IMEM overflow")
-    ASSERT(__bss_end <= _stack_top, "Test 9 DMEM overflow")
+    ASSERT(SIZEOF(.text) <= LENGTH(imem), "micro T-Kernel IMEM overflow")
+    ASSERT(__bss_end <= _stack_top, "micro T-Kernel DMEM overflow")
 }

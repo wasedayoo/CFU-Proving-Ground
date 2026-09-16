@@ -28,7 +28,88 @@ CFU-PG上でμT-Kernelを一度に起動しようとせず、CPU、メモリ、C
 | `0x10000004` | 実測値、エラー原因などの補助情報 |
 | `0x10000008`以降 | 複数の途中結果が必要な場合に使用 |
 
-## 現在のビルドと実行
+## 通常のμT-Kernelアプリケーション
+
+Test 12で確認したコンソール出力は、テスト専用ではなくCFU-PG向け
+μT-Kernelの共通機能として組み込む。通常のアプリケーションは次の1コマンドで
+コンパイル、Verilatorビルド、実行まで行う。
+
+```bash
+make mtkernel-run
+```
+
+この実行経路はμT-Kernel本体、`libtm.c`、`libtm_printf.c`、RISC-V用
+`tm_com.c`、アプリケーションの`usermain()`を同じ共通コンパイル設定で
+まとめてビルドする。
+既定のアプリケーションはmtkernel_cfu側の標準`usermain.c`である。
+別のアプリケーションを使用する場合は次のように指定する。
+
+```bash
+make mtkernel-run MTKERNEL_APP_SRCS=app/my_usermain.c
+```
+
+ELFとメモリ初期値だけを生成する場合は`make mtkernel`、Verilator実行ファイル
+まで生成して実行しない場合は`make mtkernel-build`を使用する。
+
+アプリケーションでは追加のTest 12用ヘッダや通信ソースを指定せず、通常どおり
+`<tm/tmonitor.h>`をインクルードして`tm_printf()`を呼び出せる。
+
+```c
+#include <tk/tkernel.h>
+#include <tm/tmonitor.h>
+
+EXPORT INT usermain(void)
+{
+    tm_printf((UB *)"Hello, micro T-Kernel\n");
+    return 0;
+}
+```
+
+`make mtkernel-run`では`CFU_MTKERNEL_SIM`構成を使用する。`usermain()`がreturn
+するとμT-Kernelのシャットダウン経路からテストベンチへ終了値を書き込み、
+シミュレータも終了コード0で自動終了する。
+
+関連ファイルの役割は次のとおり。
+
+| ファイル | 役割 |
+|---|---|
+| `Makefile` | 共通カーネル、コンソール、アプリケーションをリンク |
+| `app/mtkernel.ld` | CFU-PG向けIMEM/DMEM配置 |
+| `mtkernel_cfu/config/config.h` | `CFU_MTKERNEL`構成でT-Monitor APIを有効化 |
+| `mtkernel_cfu/lib/libtm/libtm.c` | `tm_putchar()`などの共通API |
+| `mtkernel_cfu/lib/libtm/libtm_printf.c` | `tm_printf()`の書式処理 |
+| `mtkernel_cfu/lib/libtm/sysdepend/iote_riscv/tm_com.c` | CFU-PGの文字出力MMIO |
+| `top.v` | `0x80000000`への書込みをシミュレータ端末へ表示 |
+
+現在の`tm_com.c`はVerilator向けの出力トランスポートである。FPGAへ移行するときは
+同じ`tm_snd_dat()`の下位実装を実機UARTへ切り替える。`tm_printf()`を使用する
+アプリケーションや共通ビルド構成は変更しない。
+
+### 回帰テストとの分離
+
+通常のアプリケーション実行は`make mtkernel-run`だけを使用する。`smoke`、
+Test 9、Test 11、Test 12はアプリケーションの別ビルド方式ではなく、移植層を
+段階別に診断する回帰テストとして残す。
+
+| テスト | 残す目的 |
+|---|---|
+| `mtkernel-smoke-run` | カーネルを介さず、起動・CSR・例外・タイマを検査 |
+| `mtkernel-test9-run` | μT-Kernel全体の初期化と初期タスク到達を検査 |
+| `mtkernel-test11-run` | タイマ待ちと複数タスク切替を検査 |
+| `mtkernel-test12-run` | 共通コンソールを含む実行経路を検査 |
+
+すべての回帰テストは次の1コマンドで順番に実行できる。
+
+```bash
+make mtkernel-check
+```
+
+Test 9、Test 11、Test 12は通常アプリと同じ`MTKERNEL_CFLAGS`、
+`MTKERNEL_CPPFLAGS`、`MTKERNEL_LDFLAGS`および共通リンク処理を使用する。
+`smoke`だけはμT-Kernel本体をリンクしないCPU移植層単体テストなので、専用の
+最小コンパイルを使用する。
+
+## スモークテストのビルドと実行
 
 CFU-PGディレクトリで次を実行する。
 
@@ -964,17 +1045,18 @@ CFU-PG側へ`mtkernel-test9`、`mtkernel-test9-build`、`mtkernel-test9-run`を�
 `gnu17`は、μT-Kernelが汎用関数ポインタ`FP`に旧形式の空引数リストを使用して
 おり、GCC 15の既定C23モードでは引数付き呼出しがエラーになるため明示した。
 
-Test 9専用リンカスクリプト`app/mtkernel_test9.ld`を追加した。IMEMを
+共通リンカスクリプト`app/mtkernel.ld`を追加した。IMEMを
 `0x00000000`から128 KiB、DMEMを`0x10000000`から64 KiBとし、`.rodata`、
 `.data`、`.bss`、カーネルヒープ、例外スタック、初期タスクスタックをDMEMへ
 配置する。`.data`のロードアドレスと実行アドレスを同じにして`memd.txt`へ
 直接初期配置し、`.bss`は本来の`reset_hdl.c`でゼロクリアする。テスト1から
 テスト8まで使用した検査用ハンドラは`reset_hdl_test.c`として残す。
 
-Test 9構成では、未実装UARTへアクセスするT-Monitorとシステムメッセージ、
-デバッガ支援、物理タイマAPI、デバイスマネージャ、シャットダウン処理を無効に
-した。通常構成の設定値は変更せず、`CFU_MTKERNEL_TEST9`定義時だけ切り替える。
-システムタイマ初期化はTest 8で追加したMachine Timer MMIOを使用する。
+CFU-PG構成は`CFU_MTKERNEL`で選択する。T-Monitor APIは共通コンソール機能として
+有効にし、システムメッセージ、デバッガ支援、物理タイマAPI、デバイス
+マネージャ、シャットダウン処理は未実装のため無効にする。Test 9固有の
+`CFU_MTKERNEL_TEST9`はテスト用`usermain()`の選択だけに使用する。システム
+タイマ初期化はTest 8で追加したMachine Timer MMIOを使用する。
 
 `usermain()`へ到達するまでの経路は次のとおり。
 
@@ -1099,8 +1181,8 @@ Verilatorでは次の結果となった。
 
 ```text
 MTKERNEL_TEST9: PASS
-mcycle   = 15659
-minstret = 14513
+mcycle   = 15670
+minstret = 14518
 ```
 
 テスト1からテスト8のスモークテストも再実行し、従来どおり904サイクル、
@@ -1195,14 +1277,14 @@ Task A stack = [0x100026f0, 0x10002af0), SP = 0x10002ab0
 
 ```text
 MTKERNEL_TEST11: PASS (timer_irqs=11)
-mcycle   = 127540
-minstret = 114625
+mcycle   = 127571
+minstret = 114630
 ```
 
-Test 9/10も従来どおり15659サイクル、14513命令退役でPASSした。テスト1から
+Test 9/10も15670サイクル、14518命令退役でPASSした。テスト1から
 テスト8のスモークテストも904サイクル、660命令退役でPASSした。
 
-## テスト12: コンソール出力
+## テスト12: コンソール出力（完了）
 
 ### 目的
 
@@ -1210,8 +1292,9 @@ Test 9/10も従来どおり15659サイクル、14513命令退役でPASSした。
 
 ### 注意事項
 
-現在のRISC-Vポートの`tm_com.c`はUARTを`0x10000000`としているが、ここは
-CFU-PGのDMEMと衝突する。そのまま使用しない。
+変更前のRISC-Vポートの`tm_com.c`はUARTを`0x10000000`としていたが、ここは
+CFU-PGのDMEMと衝突していた。この実装は使用せず、現在はCFU-PG共通の
+`tm_com.c`がシミュレーション用putchar MMIOの`0x80000000`へ出力する。
 
 ### 選択肢
 
@@ -1228,7 +1311,79 @@ CFU-PGのDMEMと衝突する。そのまま使用しない。
 - `tm_printf()`から既知の文字列を表示できる。
 - 文字出力中もタイマ割込みとタスク切替が動作する。
 
-## テスト13: FPGA実機
+### 実装・検証内容
+
+CFU-PG側へ`mtkernel-test12`、`mtkernel-test12-build`、
+`mtkernel-test12-run`を追加した。検証後、コンソールをTest 12専用構成から
+通常のCFU-PG向けμT-Kernel構成へ昇格した。`CFU_MTKERNEL`構成では
+`USE_TMONITOR`が有効になり、通常の`make mtkernel`もμT-Kernel本体の
+`libtm.c`、`libtm_printf.c`およびRISC-V用`tm_com.c`をリンクする。
+Test 12専用だった`mtkernel_test12_config.h`と`mtkernel_test12_tm_com.c`は削除した。
+
+シミュレーション専用putchar MMIOを次のアドレスとした。
+
+```text
+0x80000000 = 1文字出力（下位8 bit）
+```
+
+このアドレスはDMEMの`0x10000000`から始まる領域、タイマMMIO、性能カウンタ、
+ビデオメモリのいずれとも重ならない。`tm_snd_dat()`は1文字ごとに32 bit storeを
+行い、`top.v`が下位8 bitを`$write()`で表示する。UART状態レジスタのポーリングは
+行わない。
+
+Test 12用`usermain()`は優先度2のタスクA/Bを生成する。初期タスクは
+`tk_dly_tsk(100)`で待ち、タスクAは10 ms、タスクBは20 msの遅延後に再開する。
+各開始・起床時に`tm_printf()`を呼び、`%x`および`%d`の書式変換も確認する。
+イベントログは次の順序を検査する。
+
+```text
+Task A start
+Task B start
+Task A wakeup
+Task B wakeup
+```
+
+文字列が`tm_printf()`から`tm_putchar()`、`tm_snd_dat()`、MMIO書込みまで欠落なく
+順序どおり届いたことを確認するため、テストベンチで出力バイト数とFNV-1a
+ハッシュを計算する。アプリケーション側は通常の共通コンソールドライバだけを
+使用し、テスト用の計測処理を含まない。PASS条件は次のすべてとした。
+
+```text
+最終シグネチャ     = 0x1234567c
+タイマ割込み受理数 >= 10
+コンソール出力     = 157 byte
+FNV-1aハッシュ     = 0x7444ff7b
+```
+
+### 確認結果
+
+Verilatorでは次の文字列が表示された。
+
+```text
+MTKERNEL_TEST12: usermain
+Task A: start value=a11a
+Task B: start value=b22b
+Task A: wake delay=10
+Task B: wake delay=20
+MTKERNEL_TEST12: PASS events=4
+```
+
+テストベンチの最終結果は次のとおり。
+
+```text
+MTKERNEL_TEST12: PASS (timer_irqs=11 chars=157 hash=7444ff7b)
+mcycle   = 129873
+minstret = 107235
+```
+
+ELFの使用量は`.text` 10888 byte、`.rodata` 248 byte、`.data` 4 byte、
+`.bss` 10992 byteであり、IMEM 128 KiBおよびDMEM 64 KiBに収まっている。
+共通コンソールへ移行後もTest 12は同じ157 byteとハッシュでPASSした。
+Test 11は127571サイクル、114630命令退役、Test 9/10は15670サイクル、
+14518命令退役、テスト1からテスト8のスモークテストは904サイクル、660命令
+退役で、いずれも従来どおりPASSした。
+
+## テスト13: FPGA実機（未着手）
 
 ### 目的
 
@@ -1236,7 +1391,7 @@ Verilatorで確認済みの構成をFPGA上で動作させる。
 
 ### 実施前条件
 
-- テスト11までVerilatorでPASSしている。
+- テスト12までVerilatorでPASSしている。
 - FPGA向けクロック周波数とタイマ周期が一致している。
 - IMEM/DMEM容量がFPGAのBlock RAMへ収まる。
 - タイミング制約を満たしている。
@@ -1248,6 +1403,16 @@ Verilatorで確認済みの構成をFPGA上で動作させる。
 - UARTへ固定文字列を出す。
 - ILAでPC、トラップCSR、DMEM書き込みを観測する。
 
+### 実装予定
+
+1. 対象FPGAボードと使用するUART端子、クロック、ボーレートを確定する。
+2. 現在のシミュレーション用`0x80000000`出力とは別に、FPGA用UART MMIOを実装する。
+3. `tm_snd_dat()`の上位APIを変えず、ビルド対象に応じてシミュレーション用と
+   FPGA用の下位トランスポートを選択できるようにする。
+4. `make mtkernel-run`で確認済みのアプリケーションをFPGA用にビルドする。
+5. 単一タスク、タイマ割込み、複数タスク切替、`tm_printf()`の順に実機確認する。
+6. UART出力に加え、必要に応じてLEDまたはILAでPASS/FAILを確認する。
+
 ### 合格条件
 
 - リセット後に`_start`から実行される。
@@ -1255,6 +1420,41 @@ Verilatorで確認済みの構成をFPGA上で動作させる。
 - タイマ割込みが周期的に発生する。
 - 複数タスクが切り替わる。
 - UARTまたはLEDで完了状態を確認できる。
+
+## テスト13完了後のファイル整理
+
+コンソール出力とTest 13のFPGA実機確認が完了するまでは、UART実装、`tm_com.c`、
+テストベンチ、FPGAビルド手順が変わる可能性がある。このため、それまでは現在の
+テストターゲットと検査コードを移動しない。
+
+Test 13がPASSした時点で通常アプリケーションと回帰テストの境界を確定し、次の
+整理をまとめて実施する。
+
+```text
+CFU-Proving-Ground/
+├── Makefile                 # 通常アプリ用mtkernel、build、runだけ
+├── app/
+│   └── mtkernel.ld          # 通常アプリ用リンカスクリプト
+└── tests/mtkernel/
+    ├── Makefile             # smoke、Test 9、11、12、13
+    ├── top_test.v           # PASS/FAIL判定とテスト用監視
+    ├── apps/                # 各テストのusermain
+    ├── ld/                  # テスト専用リンカスクリプト
+    └── scripts/             # トレース解析など
+```
+
+整理時には次を行う。
+
+- `app/mtkernel_test11.c`と`app/mtkernel_test12.c`を`tests/mtkernel/apps/`へ移す。
+- smokeおよびTest 9以降のMakeターゲットを`tests/mtkernel/Makefile`へ移す。
+- `top.v`と`main.v`からテスト固有の条件分岐とPASS/FAIL判定を取り除く。
+- 通常アプリ用のルートMakefileには`mtkernel`、`mtkernel-build`、
+  `mtkernel-run`だけを残す。
+- 回帰テストは`make -C tests/mtkernel check`でまとめて実行できるようにする。
+- シミュレーション用とFPGA用のコンソール下位層を明確に分離する。
+
+テストをCFU-PGの外側へ完全に分離すると、RTLとテストのコミットがずれる可能性が
+あるため、原則として同じリポジトリ内の`tests/mtkernel/`へ配置する。
 
 ## 各テストで必ず保存する情報
 
@@ -1267,14 +1467,16 @@ Verilatorで確認済みの構成をFPGA上で動作させる。
 - リンカMapファイル
 - `memi.txt`と`memd.txt`
 - Verilatorの実行ログ
+- FPGAのビルドログ、UARTログ、ILA結果（Test 13）
 - PASS/FAILシグネチャ
 - 失敗した場合の最後のPC、命令、`mcause`、`mepc`
 
 ## 推奨する直近の作業
 
-次に着手するのはテスト11とする。
+Test 12まで完了しているため、次に着手するのはTest 13のFPGA実機確認とする。
 
-1. タスクAとタスクBを生成し、それぞれの実行順序をDMEMへ記録する。
-2. 両タスクで`tk_dly_tsk()`を使用し、タイマ割込みによる起床を確認する。
-3. 切替前後でcallee-savedレジスタと各タスクのスタックが保持されることを確認する。
-4. 両タスクの終了後にPASSシグネチャを書く。
+1. 対象ボード、UART端子、クロック周波数、ボーレートを確定する。
+2. FPGA用UARTトランスポートを実装し、固定文字列を確認する。
+3. μT-Kernelの起動、単一タスク、タイマ割込み、複数タスク切替を順に確認する。
+4. 標準`usermain()`から`tm_printf()`の出力を確認する。
+5. Test 13をPASSにした後、この計画に従ってテスト一式を`tests/mtkernel/`へ移す。
