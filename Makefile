@@ -34,7 +34,8 @@ HLS_PART := $(or $(PART_$(TARGET)),$(error Unsupported TARGET: $(TARGET)))
 HLS_CFG  := constr/cfu_hls.cfg
 
 .PHONY: build prog run clean mtkernel-smoke mtkernel-smoke-build mtkernel-smoke-run \
-	mtkernel-test9 mtkernel-test9-build mtkernel-test9-run
+	mtkernel-test9 mtkernel-test9-build mtkernel-test9-run \
+	mtkernel-test11 mtkernel-test11-build mtkernel-test11-run
 all: prog build
 
 build:
@@ -106,6 +107,34 @@ mtkernel-test9-run: mtkernel-test9-build
 	./obj_dir_mtkernel_test9/top
 	awk -f scripts/annotate_retire_trace.awk build/main.dump \
 		build/mtkernel-test9.trace > build/mtkernel-test9.trace.asm
+
+MTKERNEL_TEST11_C_SRCS := \
+	$(filter-out $(MTKERNEL_DIR)/kernel/usermain/usermain.c,$(MTKERNEL_TEST9_C_SRCS)) \
+	app/mtkernel_test11.c
+
+mtkernel-test11:
+	mkdir -p build
+	$(GCC) -Os -std=gnu17 -march=rv32im_zicsr -mabi=ilp32 -ffreestanding -fno-builtin \
+		-ffunction-sections -fdata-sections -nostdlib -mno-relax \
+		-D_IOTE_RISCV_ -DCFU_MTKERNEL_TEST9 -DCFU_MTKERNEL_TEST11 \
+		-I$(MTKERNEL_DIR)/include -I$(MTKERNEL_DIR)/config \
+		-I$(MTKERNEL_DIR)/kernel/knlinc -I$(MTKERNEL_DIR)/kernel/sysdepend \
+		-Wl,--gc-sections -Wl,--build-id=none -Wl,-Map,build/mtkernel-test11.map \
+		-Tapp/mtkernel_test9.ld -o build/main.elf \
+		$(MTKERNEL_TEST9_ASM_SRCS) \
+		$(MTKERNEL_DIR)/kernel/sysdepend/cpu/core/riscv/reset_hdl.c \
+		$(MTKERNEL_TEST11_C_SRCS) -lc -lgcc
+	$(MAKE) initf
+
+mtkernel-test11-build: mtkernel-test11
+	CCACHE_DISABLE=1 $(RTLSIM) --binary --trace --top-module top \
+		-DMTKERNEL_TEST11 --Mdir obj_dir_mtkernel_test11 \
+		--Wno-WIDTHTRUNC --Wno-WIDTHEXPAND -o top *.v
+
+mtkernel-test11-run: mtkernel-test11-build
+	./obj_dir_mtkernel_test11/top
+	awk -f scripts/annotate_retire_trace.awk build/main.dump \
+		build/mtkernel-test11.trace > build/mtkernel-test11.trace.asm
 
 
 
