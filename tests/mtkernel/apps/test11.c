@@ -1,5 +1,5 @@
 /*
- * CFU-PG micro T-Kernel incremental Test 11.
+ * CFU-PG micro T-Kernel regression Test 11.
  *
  * Exercise periodic timer interrupts, delayed task wakeups, two task stacks,
  * and preservation of RISC-V callee-saved registers across dispatches.

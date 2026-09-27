@@ -1220,26 +1220,18 @@ module csr_file (
 
     always @(posedge clk_i) begin
         if (rst_i) begin
-`ifdef MTKERNEL_SMOKE
-            // Test 5 starts from non-zero values so startup.S must clear them.
-            mstatus <= 32'h00000008;
-            mie     <= 32'h00000080;
-`else
             mstatus <= {`XLEN{1'b0}};
             mie     <= {`XLEN{1'b0}};
-`endif
             mtvec   <= {`XLEN{1'b0}};
             mepc    <= {`XLEN{1'b0}};
             mcause  <= {`XLEN{1'b0}};
         end else if (trap_i) begin
-            // Trap entry: save interrupt state and enter Machine mode.
             mepc           <= {trap_pc_i[`XLEN-1:2], 2'b00};
             mcause         <= trap_cause_i;
             mstatus[7]     <= mstatus[3];
             mstatus[3]     <= 1'b0;
             mstatus[12:11] <= 2'b11;
         end else if (mret_i) begin
-            // This core implements Machine mode only, so MPP returns to M-mode.
             mstatus[3]     <= mstatus[7];
             mstatus[7]     <= 1'b1;
             mstatus[12:11] <= 2'b11;
@@ -1261,14 +1253,6 @@ module csr_file (
         end
     end
 
-`ifdef MTKERNEL_SMOKE
-    always @(posedge clk_i) begin
-        if (!rst_i && we_i)
-            $display("CSR_WE: addr=%03x data=%08x", waddr_i, wdata_i[31:0]);
-        if (!rst_i && trap_i)
-            $display("TRAP: pc=%08x cause=%08x", trap_pc_i[31:0], trap_cause_i[31:0]);
-    end
-`endif
 endmodule
 
 `undef PROC_IS_RV64

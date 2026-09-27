@@ -17,6 +17,12 @@ SECTIONS
         . = ALIGN(4);
     } > imem
 
+    .test_status : {
+        . = ALIGN(4);
+        KEEP(*(.test_status))
+        . = ALIGN(4);
+    } > dmem
+
     .rodata : {
         . = ALIGN(4);
         *(.rodata)

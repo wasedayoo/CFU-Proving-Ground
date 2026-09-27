@@ -1,0 +1,311 @@
+/* CFU Proving Ground since 2025-02    Copyright(c) 2025 Archlab. Science Tokyo /
+/ Released under the MIT license https://opensource.org/licenses/mit           */
+
+`default_nettype none
+
+module top_test;
+    reg clk   = 1; always #5 clk <= ~clk;
+    reg rst_n = 0; initial #50 rst_n = 1;
+
+//==============================================================================
+// Perfomance Counter
+//------------------------------------------------------------------------------
+    reg [63:0] mcycle = 0;
+    always @(posedge clk) if (!m0.rst && !cpu_sim_fini) mcycle <= mcycle + 1;
+
+    reg [63:0] minstret     = 0;
+    reg [63:0] br_pred_cntr = 0;
+    reg [63:0] br_misp_cntr = 0;
+    always @(posedge clk) if (!m0.rst && !cpu_sim_fini && !m0.cpu.stall_i) begin
+        if (!m0.cpu.stall && m0.cpu.Ma_v) minstret <= minstret + 1;
+        if (m0.cpu.ExMa_v && m0.cpu.ExMa_is_ctrl_tsfr)
+          br_pred_cntr <= br_pred_cntr + 1;
+        if (m0.cpu.ExMa_v && m0.cpu.ExMa_is_ctrl_tsfr && m0.cpu.Ma_br_misp)
+          br_misp_cntr <= br_misp_cntr + 1;
+    end
+//==============================================================================
+// Dump
+//------------------------------------------------------------------------------
+/*
+    initial begin
+        $dumpfile("dump.vcd");
+        $dumpvars(0, top);
+    end
+*/
+
+//==============================================================================
+// Condition for simulation to end
+//------------------------------------------------------------------------------
+    reg cpu_sim_fini = 0;
+    always @(posedge clk) begin
+        if (m0.cpu.dbus_addr_o == 32'h80000000 && m0.cpu.dbus_wvalid_o) begin
+            if (m0.cpu.dbus_wdata[31:0] == 32'h00020000) cpu_sim_fini <= 1;
+            else begin $write("%c", m0.cpu.dbus_wdata[7:0]); $fflush(); end
+        end
+        if (cpu_sim_fini) begin
+            $finish(1);
+        end
+    end
+
+`ifdef MTKERNEL_SMOKE
+    /* Test-only reset state injection; production proc.v always resets to zero. */
+    initial begin
+        @(negedge m0.rst);
+        m0.cpu.csr.mstatus = 32'h00000008;
+        m0.cpu.csr.mie = 32'h00000080;
+    end
+
+    always @(posedge clk) begin
+        if (!m0.rst && m0.cpu.csr.we_i)
+            $display("CSR_WE: addr=%03x data=%08x",
+                     m0.cpu.csr.waddr_i, m0.cpu.csr.wdata_i[31:0]);
+        if (!m0.rst && m0.cpu.csr.trap_i)
+            $display("TRAP: pc=%08x cause=%08x",
+                     m0.cpu.csr.trap_pc_i[31:0],
+                     m0.cpu.csr.trap_cause_i[31:0]);
+    end
+
+    reg [31:0] smoke_cycles = 0;
+    always @(posedge clk) begin
+        if (!m0.rst) begin
+            smoke_cycles <= smoke_cycles + 1;
+
+            if (m0.cpu.MaWb_v && smoke_cycles < 100) begin
+                $display("TRACE: pc=%08x insn=%08x", m0.cpu.MaWb_pc, m0.cpu.MaWb_ir);
+            end
+
+            if (m0.cpu.dbus_wvalid_o && m0.cpu.dbus_addr_o == 32'h10000000) begin
+                if (m0.cpu.dbus_wdata_o[31:0] == 32'h12345678) begin
+                    $display("MTKERNEL_SMOKE: PASS");
+                    $finish;
+                end else begin
+                    $display("MTKERNEL_SMOKE: FAIL (data=%08x)", m0.cpu.dbus_wdata_o[31:0]);
+                    $fatal(1);
+                end
+            end
+
+            if (smoke_cycles == 2000) begin
+                $display("MTKERNEL_SMOKE: TIMEOUT");
+                $fatal(1);
+            end
+        end
+    end
+`endif
+
+`ifdef MTKERNEL_TEST9
+    reg [31:0] test9_cycles = 0;
+    always @(posedge clk) begin
+        if (!m0.rst) begin
+            test9_cycles <= test9_cycles + 1;
+
+            if (m0.cpu.dbus_wvalid_o && m0.cpu.dbus_addr_o == 32'h10000000) begin
+                if (m0.cpu.dbus_wdata_o[31:0] == 32'h12345679) begin
+                    $display("MTKERNEL_TEST9: PASS");
+                    $finish;
+                end else begin
+                    $display("MTKERNEL_TEST9: FAIL (data=%08x)",
+                             m0.cpu.dbus_wdata_o[31:0]);
+                    $fatal(1);
+                end
+            end
+
+            if (test9_cycles == 500000) begin
+                $display("MTKERNEL_TEST9: TIMEOUT pc=%08x mepc=%08x mcause=%08x mstatus=%08x",
+                         m0.cpu.ExMa_pc, m0.cpu.csr.mepc,
+                         m0.cpu.csr.mcause, m0.cpu.csr.mstatus);
+                $fatal(1);
+            end
+        end
+    end
+`endif
+
+`ifdef MTKERNEL_TEST11
+    reg [31:0] test11_cycles = 0;
+    reg [31:0] test11_timer_irqs = 0;
+    always @(posedge clk) begin
+        if (!m0.rst) begin
+            test11_cycles <= test11_cycles + 1;
+
+            if (m0.cpu.Ma_timer_irq) begin
+                test11_timer_irqs <= test11_timer_irqs + 1;
+            end
+
+            if (m0.cpu.dbus_wvalid_o && m0.cpu.dbus_addr_o == 32'h10000000) begin
+                if (m0.cpu.dbus_wdata_o[31:0] == 32'h1234567b &&
+                    test11_timer_irqs >= 10) begin
+                    $display("MTKERNEL_TEST11: PASS (timer_irqs=%0d)",
+                             test11_timer_irqs);
+                    $finish;
+                end else begin
+                    $display("MTKERNEL_TEST11: FAIL (data=%08x timer_irqs=%0d)",
+                             m0.cpu.dbus_wdata_o[31:0], test11_timer_irqs);
+                    $fatal(1);
+                end
+            end
+
+            if (test11_cycles == 750000) begin
+                $display("MTKERNEL_TEST11: TIMEOUT pc=%08x mepc=%08x mcause=%08x mstatus=%08x timer_irqs=%0d",
+                         m0.cpu.ExMa_pc, m0.cpu.csr.mepc,
+                         m0.cpu.csr.mcause, m0.cpu.csr.mstatus,
+                         test11_timer_irqs);
+                $fatal(1);
+            end
+        end
+    end
+`endif
+
+`ifdef MTKERNEL_TEST12
+    localparam [31:0] TEST12_PUTCHAR_ADDR = 32'h80000000;
+    localparam [31:0] TEST12_FNV1A_OFFSET = 32'h811c9dc5;
+    localparam [31:0] TEST12_FNV1A_PRIME  = 32'h01000193;
+    reg [31:0] test12_cycles = 0;
+    reg [31:0] test12_timer_irqs = 0;
+    reg [31:0] test12_console_count = 0;
+    reg [31:0] test12_console_hash = TEST12_FNV1A_OFFSET;
+    always @(posedge clk) begin
+        if (!m0.rst) begin
+            test12_cycles <= test12_cycles + 1;
+
+            if (m0.cpu.Ma_timer_irq) begin
+                test12_timer_irqs <= test12_timer_irqs + 1;
+            end
+
+            if (m0.cpu.dbus_wvalid_o &&
+                m0.cpu.dbus_addr_o == TEST12_PUTCHAR_ADDR) begin
+                test12_console_count <= test12_console_count + 1;
+                test12_console_hash <=
+                    (test12_console_hash ^ {24'd0, m0.cpu.dbus_wdata_o[7:0]}) *
+                    TEST12_FNV1A_PRIME;
+            end
+
+            if (m0.cpu.dbus_wvalid_o && m0.cpu.dbus_addr_o == 32'h10000000) begin
+                if (m0.cpu.dbus_wdata_o[31:0] == 32'h1234567c &&
+                    test12_timer_irqs >= 10 &&
+                    test12_console_count == 157 &&
+                    test12_console_hash == 32'h7444ff7b) begin
+                    $display("MTKERNEL_TEST12: PASS (timer_irqs=%0d chars=%0d hash=%08x)",
+                             test12_timer_irqs, test12_console_count,
+                             test12_console_hash);
+                    $finish;
+                end else begin
+                    $display("MTKERNEL_TEST12: FAIL (data=%08x timer_irqs=%0d chars=%0d hash=%08x)",
+                             m0.cpu.dbus_wdata_o[31:0], test12_timer_irqs,
+                             test12_console_count, test12_console_hash);
+                    $fatal(1);
+                end
+            end
+
+            if (test12_cycles == 750000) begin
+                $display("MTKERNEL_TEST12: TIMEOUT pc=%08x mepc=%08x mcause=%08x timer_irqs=%0d chars=%0d hash=%08x",
+                         m0.cpu.ExMa_pc, m0.cpu.csr.mepc, m0.cpu.csr.mcause,
+                         test12_timer_irqs, test12_console_count,
+                         test12_console_hash);
+                $fatal(1);
+            end
+        end
+    end
+`endif
+
+    final begin
+        $write("\n");
+        $write("===> mcycle                                 : %10d\n", mcycle);
+        $write("===> minstret                               : %10d\n", minstret);
+        $write("===> Total number of branch predictions     : %10d\n", br_pred_cntr);
+        $write("===> Total number of branch mispredictions  : %10d\n", br_misp_cntr);
+        $write("===> simulation finish!!\n");
+        $write("\n");
+    end
+
+//==============================================================================
+// Retired instruction trace for the full micro T-Kernel test
+//------------------------------------------------------------------------------
+`ifdef MTKERNEL_TEST9
+    integer retire_trace_fp;
+    initial begin
+        retire_trace_fp = $fopen("build/mtkernel-test9.trace", "w");
+        if (retire_trace_fp == 0) begin
+            $fatal(1, "MTKERNEL_TEST9: could not open retired instruction trace");
+        end
+        $fwrite(retire_trace_fp, "# retire pc       insn\n");
+    end
+`elsif MTKERNEL_TEST11
+    integer retire_trace_fp;
+    initial begin
+        retire_trace_fp = $fopen("build/mtkernel-test11.trace", "w");
+        if (retire_trace_fp == 0) begin
+            $fatal(1, "MTKERNEL_TEST11: could not open retired instruction trace");
+        end
+        $fwrite(retire_trace_fp, "# retire pc       insn\n");
+    end
+`elsif MTKERNEL_TEST12
+    integer retire_trace_fp;
+    initial begin
+        retire_trace_fp = $fopen("build/mtkernel-test12.trace", "w");
+        if (retire_trace_fp == 0) begin
+            $fatal(1, "MTKERNEL_TEST12: could not open retired instruction trace");
+        end
+        $fwrite(retire_trace_fp, "# retire pc       insn\n");
+    end
+`endif
+
+`ifdef MTKERNEL_TEST9
+    always @(posedge clk) begin
+        if (!m0.rst && !cpu_sim_fini && !m0.cpu.stall_i &&
+            !m0.cpu.stall && m0.cpu.Ma_v) begin
+            $fwrite(retire_trace_fp, "%08d %08x %08x\n",
+                    minstret + 64'd1, m0.cpu.ExMa_pc, m0.cpu.ExMa_ir);
+        end
+    end
+`elsif MTKERNEL_TEST11
+    always @(posedge clk) begin
+        if (!m0.rst && !cpu_sim_fini && !m0.cpu.stall_i &&
+            !m0.cpu.stall && m0.cpu.Ma_v) begin
+            $fwrite(retire_trace_fp, "%08d %08x %08x\n",
+                    minstret + 64'd1, m0.cpu.ExMa_pc, m0.cpu.ExMa_ir);
+        end
+    end
+`elsif MTKERNEL_TEST12
+    always @(posedge clk) begin
+        if (!m0.rst && !cpu_sim_fini && !m0.cpu.stall_i &&
+            !m0.cpu.stall && m0.cpu.Ma_v) begin
+            $fwrite(retire_trace_fp, "%08d %08x %08x\n",
+                    minstret + 64'd1, m0.cpu.ExMa_pc, m0.cpu.ExMa_ir);
+        end
+    end
+`endif
+
+//==============================================================================
+// Debug Dump
+//------------------------------------------------------------------------------
+/*
+    reg r_rst = 0;
+    always @(posedge clk) r_rst <= !m0.rst;
+    always @(posedge clk) if (r_rst) begin
+        $write(" %06d: %x ", minstret, m0.cpu.r_pc);
+        if (m0.cpu.IfId_v) $write("%x ", m0.cpu.IfId_pc); else $write("-------- ");
+        if (m0.cpu.IdEx_v) $write("%x", m0.cpu.IdEx_pc); else $write("--------");
+        if (m0.cpu.IdEx_v && m0.cpu.IdEx_bru_ctrl[0]) begin
+          if(m0.cpu.IdEx_bru_ctrl[7:6]) $write("(J) "); else $write("(B) ");
+        end
+        else $write("( ) ");
+        if (m0.cpu.ExMa_v) $write("%x ", m0.cpu.ExMa_pc); else $write("-------- ");
+        if (m0.cpu.MaWb_v) $write("%x:", m0.cpu.MaWb_pc); else $write("--------:");
+        if (m0.cpu.ExMa_v && m0.cpu.ExMa_is_ctrl_tsfr) begin
+            $write(" JB_in_Ma:");
+            if (m0.cpu.ExMa_is_ctrl_tsfr && m0.cpu.Ma_br_misp)
+              $write(" miss"); else $write(" hit");
+        end
+
+        $write("\n");
+    end
+*/
+
+    wire sda, scl, dc, res;
+    main m0 (
+        .clk_i      (clk),
+        .st7789_SDA (sda),
+        .st7789_SCL (scl),
+        .st7789_DC  (dc),
+        .st7789_RES (res)
+    );
+endmodule

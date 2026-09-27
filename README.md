@@ -74,10 +74,13 @@ The simulation will not finish. Please press Ctrl + C in the terminal to end the
 
 ## Step (4) : Run the RISC-V processor on an FPGA board
 
-Memory initialization files `memi.txt` and `memd.txt` are compiled from `main.c` with the following command.
+Memory initialization files `memi.txt` and `memd.txt` are compiled from micro T-Kernel and
+`../mtkernel_cfu/kernel/usermain/usermain.c` with the following command.
 ```
 $ make prog
 ```
+
+The former bare-metal application can be compiled with `make baremetal-prog`.
 
 The default FPGA board is Arty A7.
 If you want to use Nexys A7, modify `Makefile` to use `TARGET=nexys_a7`.
@@ -95,7 +98,7 @@ $ make bit
 ```
 The generated bitstream file is copied in `build/main.bit`.
 Configure and run FPGA with this `main.bit`.
-When the FPGA is configured, an application displays many random characters, similar to the simulation.
+The default micro T-Kernel application toggles LD4, LD5, and LD6 independently.
 
 > [!NOTE]
 > Note that a mini display (ST7789 TFT LCD) should be appropriately connected to the Pmod JC of Arty A7-35T FPGA board.

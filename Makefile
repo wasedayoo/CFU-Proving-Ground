@@ -33,47 +33,18 @@ PART_cmod_a7  := xc7a35ticpg236-1L
 HLS_PART := $(or $(PART_$(TARGET)),$(error Unsupported TARGET: $(TARGET)))
 HLS_CFG  := constr/cfu_hls.cfg
 
-.PHONY: build prog run clean mtkernel mtkernel-build mtkernel-run mtkernel-check \
-	mtkernel-smoke mtkernel-smoke-build mtkernel-smoke-run \
-	mtkernel-test9 mtkernel-test9-build mtkernel-test9-run \
-	mtkernel-test11 mtkernel-test11-build mtkernel-test11-run \
-	mtkernel-test12 mtkernel-test12-build mtkernel-test12-run \
-	mtkernel-arty-a7 mtkernel-arty-a7-sim mtkernel-arty-a7-bit \
-	mtkernel-arty-a7-conf
+.PHONY: build prog baremetal-prog run clean
 all: prog build
 
 build:
-	$(RTLSIM) --binary --trace --top-module top --Wno-WIDTHTRUNC --Wno-WIDTHEXPAND -o top *.v
+	CCACHE_DISABLE=1 $(RTLSIM) --binary --trace --top-module top \
+		--Wno-WIDTHTRUNC --Wno-WIDTHEXPAND -o top *.v
 	gcc -O2 dispemu/dispemu.c -o build/dispemu -lcairo -lX11
 
 imem_size =	$(shell grep -oP "\`define\s+IMEM_SIZE\s+\(\K[^)]*" config.vh | bc)
 dmem_size =	$(shell grep -oP "\`define\s+DMEM_SIZE\s+\(\K[^)]*" config.vh | bc)
 
 MTKERNEL_DIR ?= ../mtkernel_cfu
-MTKERNEL_STARTUP := $(MTKERNEL_DIR)/kernel/sysdepend/cpu/core/riscv/startup.S
-MTKERNEL_RESET_TEST := $(MTKERNEL_DIR)/kernel/sysdepend/cpu/core/riscv/reset_hdl_test.c
-MTKERNEL_MRET_TEST := $(MTKERNEL_DIR)/kernel/sysdepend/cpu/core/riscv/mret_test.S
-MTKERNEL_ECALL_TEST := $(MTKERNEL_DIR)/kernel/sysdepend/cpu/core/riscv/ecall_test.S
-MTKERNEL_TIMER_TEST := $(MTKERNEL_DIR)/kernel/sysdepend/cpu/core/riscv/timer_test.S
-
-mtkernel-smoke:
-	mkdir -p build
-	$(GCC) -Os -march=rv32im_zicsr -mabi=ilp32 -ffreestanding -nostdlib -mno-relax \
-		-D_IOTE_RISCV_ -I$(MTKERNEL_DIR)/include \
-		-Wl,--build-id=none -Wl,-Map,build/mtkernel-smoke.map \
-		-Tapp/mtkernel_smoke.ld -o build/main.elf \
-		$(MTKERNEL_STARTUP) $(MTKERNEL_RESET_TEST) $(MTKERNEL_MRET_TEST) \
-		$(MTKERNEL_ECALL_TEST) $(MTKERNEL_TIMER_TEST)
-	$(MAKE) initf
-
-mtkernel-smoke-build: mtkernel-smoke
-	CCACHE_DISABLE=1 $(RTLSIM) --binary --trace --top-module top -DMTKERNEL_SMOKE \
-		--Mdir obj_dir_mtkernel_smoke \
-		--Wno-WIDTHTRUNC --Wno-WIDTHEXPAND -o top *.v
-
-mtkernel-smoke-run: mtkernel-smoke-build
-	./obj_dir_mtkernel_smoke/top
-
 MTKERNEL_COMMON_C_SRCS := \
 	$(wildcard $(MTKERNEL_DIR)/kernel/tkernel/*.c) \
 	$(wildcard $(MTKERNEL_DIR)/kernel/tstdlib/*.c) \
@@ -89,7 +60,7 @@ MTKERNEL_COMMON_C_SRCS := \
 MTKERNEL_ASM_SRCS := \
 	$(MTKERNEL_DIR)/kernel/sysdepend/cpu/core/riscv/startup.S \
 	$(MTKERNEL_DIR)/kernel/sysdepend/cpu/core/riscv/dispatch.S
-MTKERNEL_APP_SRCS ?= $(MTKERNEL_DIR)/kernel/usermain/usermain.c
+MTKERNEL_APP_SRC := $(MTKERNEL_DIR)/kernel/usermain/usermain.c
 MTKERNEL_CFLAGS := -Os -std=gnu17 -march=rv32im_zicsr -mabi=ilp32 \
 	-ffreestanding -fno-builtin -ffunction-sections -fdata-sections \
 	-nostdlib -mno-relax
@@ -99,99 +70,21 @@ MTKERNEL_CPPFLAGS := -D_IOTE_RISCV_ -DCFU_MTKERNEL \
 MTKERNEL_LDFLAGS := -Wl,--gc-sections -Wl,--build-id=none -Tapp/mtkernel.ld
 MTKERNEL_CLK_FREQ_MHZ := $(shell awk '/CLK_FREQ_MHZ/ {print $$3; exit}' config.vh)
 MTKERNEL_FPGA_TIMER_HZ := $(shell expr $(MTKERNEL_CLK_FREQ_MHZ) \* 1000000)
-
-mtkernel: MTKERNEL_BUILD_DEFS := -DCFU_MTKERNEL_SIM
-mtkernel: MTKERNEL_BUILD_MAP := build/mtkernel.map
-mtkernel: MTKERNEL_BUILD_SRCS = $(MTKERNEL_APP_SRCS)
-
-mtkernel-build: mtkernel
-	CCACHE_DISABLE=1 $(RTLSIM) --binary --trace --top-module top \
-		-DMTKERNEL --Mdir obj_dir_mtkernel \
-		--Wno-WIDTHTRUNC --Wno-WIDTHEXPAND -o top *.v
-
-mtkernel-run: mtkernel-build
-	./obj_dir_mtkernel/top
-
-MTKERNEL_TEST9_C_SRCS := \
-	$(MTKERNEL_DIR)/kernel/usermain/usermain.c
-mtkernel-test9: MTKERNEL_BUILD_DEFS := -DCFU_MTKERNEL_TEST9
-mtkernel-test9: MTKERNEL_BUILD_MAP := build/mtkernel-test9.map
-mtkernel-test9: MTKERNEL_BUILD_SRCS := $(MTKERNEL_TEST9_C_SRCS)
-
-mtkernel-test9-build: mtkernel-test9
-	CCACHE_DISABLE=1 $(RTLSIM) --binary --trace --top-module top \
-		-DMTKERNEL_TEST9 --Mdir obj_dir_mtkernel_test9 \
-		--Wno-WIDTHTRUNC --Wno-WIDTHEXPAND -o top *.v
-
-mtkernel-test9-run: mtkernel-test9-build
-	./obj_dir_mtkernel_test9/top
-	awk -f scripts/annotate_retire_trace.awk build/main.dump \
-		build/mtkernel-test9.trace > build/mtkernel-test9.trace.asm
-
-MTKERNEL_TEST11_C_SRCS := \
-	app/mtkernel_test11.c
-mtkernel-test11: MTKERNEL_BUILD_DEFS := -DCFU_MTKERNEL_TEST11
-mtkernel-test11: MTKERNEL_BUILD_MAP := build/mtkernel-test11.map
-mtkernel-test11: MTKERNEL_BUILD_SRCS := $(MTKERNEL_TEST11_C_SRCS)
-
-mtkernel-test11-build: mtkernel-test11
-	CCACHE_DISABLE=1 $(RTLSIM) --binary --trace --top-module top \
-		-DMTKERNEL_TEST11 --Mdir obj_dir_mtkernel_test11 \
-		--Wno-WIDTHTRUNC --Wno-WIDTHEXPAND -o top *.v
-
-mtkernel-test11-run: mtkernel-test11-build
-	./obj_dir_mtkernel_test11/top
-	awk -f scripts/annotate_retire_trace.awk build/main.dump \
-		build/mtkernel-test11.trace > build/mtkernel-test11.trace.asm
-
-MTKERNEL_TEST12_C_SRCS := \
-	app/mtkernel_test12.c
-mtkernel-test12: MTKERNEL_BUILD_DEFS := -DCFU_MTKERNEL_TEST12
-mtkernel-test12: MTKERNEL_BUILD_MAP := build/mtkernel-test12.map
-mtkernel-test12: MTKERNEL_BUILD_SRCS := $(MTKERNEL_TEST12_C_SRCS)
-
-mtkernel-arty-a7: MTKERNEL_BUILD_DEFS := \
+MTKERNEL_FPGA_DEFS := \
 	-DCFU_MTKERNEL_FPGA -DCFU_MTKERNEL_TIMER_HZ=$(MTKERNEL_FPGA_TIMER_HZ)UL
-mtkernel-arty-a7: MTKERNEL_BUILD_MAP := build/mtkernel-arty-a7.map
-mtkernel-arty-a7: MTKERNEL_BUILD_SRCS := app/mtkernel_arty_a7.c
+MTKERNEL_FPGA_MAP := build/mtkernel-fpga.map
 
-mtkernel mtkernel-test9 mtkernel-test11 mtkernel-test12 mtkernel-arty-a7:
+prog:
 	mkdir -p build
-	$(GCC) $(MTKERNEL_CFLAGS) $(MTKERNEL_CPPFLAGS) $(MTKERNEL_BUILD_DEFS) \
-		$(MTKERNEL_LDFLAGS) -Wl,-Map,$(MTKERNEL_BUILD_MAP) -o build/main.elf \
+	$(GCC) $(MTKERNEL_CFLAGS) $(MTKERNEL_CPPFLAGS) $(MTKERNEL_FPGA_DEFS) \
+		$(MTKERNEL_LDFLAGS) -Wl,-Map,$(MTKERNEL_FPGA_MAP) -o build/main.elf \
 		$(MTKERNEL_ASM_SRCS) \
 		$(MTKERNEL_DIR)/kernel/sysdepend/cpu/core/riscv/reset_hdl.c \
-		$(MTKERNEL_COMMON_C_SRCS) $(MTKERNEL_BUILD_SRCS) -lc -lgcc
+		$(MTKERNEL_COMMON_C_SRCS) $(MTKERNEL_APP_SRC) -lc -lgcc
 	$(MAKE) initf
 
-mtkernel-test12-build: mtkernel-test12
-	CCACHE_DISABLE=1 $(RTLSIM) --binary --trace --top-module top \
-		-DMTKERNEL_TEST12 --Mdir obj_dir_mtkernel_test12 \
-		--Wno-WIDTHTRUNC --Wno-WIDTHEXPAND -o top *.v
-
-mtkernel-test12-run: mtkernel-test12-build
-	./obj_dir_mtkernel_test12/top
-	awk -f scripts/annotate_retire_trace.awk build/main.dump \
-		build/mtkernel-test12.trace > build/mtkernel-test12.trace.asm
-
-mtkernel-arty-a7-sim:
-	$(MAKE) mtkernel-run MTKERNEL_APP_SRCS=app/mtkernel_arty_a7.c
-
-mtkernel-arty-a7-bit: mtkernel-arty-a7
-	$(MAKE) init TARGET=arty_a7
-	$(MAKE) bit TARGET=arty_a7
-
-mtkernel-arty-a7-conf: mtkernel-arty-a7-bit
-	$(MAKE) conf TARGET=arty_a7
-
-mtkernel-check:
-	$(MAKE) mtkernel-smoke-run
-	$(MAKE) mtkernel-test9-run
-	$(MAKE) mtkernel-test11-run
-	$(MAKE) mtkernel-test12-run
-
 ifeq ($(strip $(IS_RV64)),1)
-prog:
+baremetal-prog:
 	mkdir -p build
 	$(GCC) -Os -march=rv64im -mabi=lp64 -nostartfiles -Iapp -Tapp/link.ld -o build/main.elf app/crt0.s app/*.c *.c
 	make initf
@@ -200,7 +93,7 @@ INITF_DMEM_HEX_FMT := 1/8 "%016x\n"
 INITF_DMEM_PREFIX := 64'h
 INITF_HEX_SUFFIX := .64.hex
 else
-prog:
+baremetal-prog:
 	mkdir -p build
 	$(GCC) -Os -march=rv32im -mabi=ilp32 -nostartfiles -Iapp -Tapp/link.ld -o build/main.elf app/crt0.s app/*.c *.c
 	make initf
@@ -213,8 +106,7 @@ endif
 initf:
 	$(OBJDUMP) -D build/main.elf > build/main.dump
 	$(OBJCOPY) -O binary --only-section=.text build/main.elf build/memi.bin.tmp; \
-	$(OBJCOPY) -O binary --only-section=.test_status \
-					 --only-section=.data \
+	$(OBJCOPY) -O binary --only-section=.data \
 					 --only-section=.rodata \
 					 --only-section=.bss \
 						 build/main.elf build/memd.bin.tmp; \
@@ -284,7 +176,7 @@ vpp:
 	cp -f vitis/hls/impl/verilog/*.tcl cfu/. 2>/dev/null || true
 
 hls-sim:
-	make prog
+	$(MAKE) baremetal-prog
 	tmp_files=""; \
 	for src in cfu/*.v; do \
 		tmp="cfu/.sim_$$(basename "$$src")"; \

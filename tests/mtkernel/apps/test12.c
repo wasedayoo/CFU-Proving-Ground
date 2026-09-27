@@ -1,4 +1,4 @@
-/* CFU-PG micro T-Kernel incremental Test 12: console output. */
+/* CFU-PG micro T-Kernel regression Test 12: console output. */
 
 #include <tk/tkernel.h>
 #include <tm/tmonitor.h>

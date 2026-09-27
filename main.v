@@ -41,25 +41,29 @@ module main (
     wire [`DBUS_STRB_WIDTH-1:0] dbus_wstrb;
     wire [`DBUS_DATA_WIDTH-1:0] dbus_rdata;
 
-    localparam [1:0] RDATA_DMEM  = 2'd0;
-    localparam [1:0] RDATA_PERF  = 2'd1;
-    localparam [1:0] RDATA_TIMER = 2'd2;
-    localparam [1:0] RDATA_UART  = 2'd3;
+    localparam [2:0] RDATA_DMEM  = 3'd0;
+    localparam [2:0] RDATA_PERF  = 3'd1;
+    localparam [2:0] RDATA_TIMER = 3'd2;
+    localparam [2:0] RDATA_UART  = 3'd3;
+    localparam [2:0] RDATA_LED   = 3'd4;
 
     wire timer_addr_hit = (dbus_addr == 32'h6000bff8) ||
                           (dbus_addr == 32'h6000bffc) ||
                           (dbus_addr == 32'h60004000) ||
                           (dbus_addr == 32'h60004004);
     wire uart_addr_hit = (dbus_addr == 32'h80000000) ||
-                         (dbus_addr == 32'h80000004) ||
-                         (dbus_addr == 32'h80000008);
-    reg [1:0] rdata_sel = RDATA_DMEM;
+                         (dbus_addr == 32'h80000004);
+    wire led_addr_hit = (dbus_addr == 32'h80000008) ||
+                        (dbus_addr == 32'h8000000c);
+    reg [2:0] rdata_sel = RDATA_DMEM;
     always @(posedge clk) begin
-        rdata_sel <= uart_addr_hit  ? RDATA_UART :
+        rdata_sel <= led_addr_hit   ? RDATA_LED :
+                     uart_addr_hit  ? RDATA_UART :
                      timer_addr_hit ? RDATA_TIMER :
                      dbus_addr[30]  ? RDATA_PERF : RDATA_DMEM;
     end
-    assign dbus_rdata = (rdata_sel == RDATA_UART)  ? uart_rdata :
+    assign dbus_rdata = (rdata_sel == RDATA_LED)   ? led_rdata :
+                        (rdata_sel == RDATA_UART)  ? uart_rdata :
                         (rdata_sel == RDATA_TIMER) ? timer_rdata :
                         (rdata_sel == RDATA_PERF)  ? {(`XLEN / 32){perf_rdata}} :
                                                     dmem_rdata;
@@ -116,20 +120,11 @@ module main (
         .irq_o   (timer_irq)
     );
 
+    /* UART MMIO: transmit at 0x80000000, status at 0x80000004. */
     wire uart_we = dbus_we && (dbus_addr == 32'h80000000) && dbus_wstrb[0];
-    wire led_toggle_we = dbus_we && (dbus_addr == 32'h80000008) && dbus_wstrb[0];
     wire uart_ready;
     wire uart_txd;
-    reg [2:0] led_state;
-    wire [`XLEN-1:0] uart_rdata = {{(`XLEN-11){1'b0}}, led_state,
-                                    7'b0000000, uart_ready};
-    always @(posedge clk) begin
-        if (rst) begin
-            led_state <= 3'b000;
-        end else if (led_toggle_we) begin
-            led_state <= led_state ^ dbus_wdata[2:0];
-        end
-    end
+    wire [`XLEN-1:0] uart_rdata = {{(`XLEN-1){1'b0}}, uart_ready};
 `ifdef SYNTHESIS
     localparam integer UART_CLOCK_HZ = `CLK_FREQ_MHZ * 1000000;
 `else
@@ -148,23 +143,24 @@ module main (
         .txd_o   (uart_txd)
     );
 
+    /* LED MMIO: toggle at 0x80000008, status at 0x8000000c. */
+    wire led_toggle_we = dbus_we && (dbus_addr == 32'h80000008) && dbus_wstrb[0];
+    reg [2:0] led_state;
+    wire [`XLEN-1:0] led_rdata = {{(`XLEN-3){1'b0}}, led_state};
+    always @(posedge clk) begin
+        if (rst) begin
+            led_state <= 3'b000;
+        end else if (led_toggle_we) begin
+            led_state <= led_state ^ dbus_wdata[2:0];
+        end
+    end
+
 `ifdef ARTY_A7
     assign txd_o = uart_txd;
     assign led_o = led_state;
     wire unused_rxd = rxd_i;
 `endif
 
-`ifndef SYNTHESIS
-`ifndef MTKERNEL
-`ifndef MTKERNEL_TEST9
-`ifndef MTKERNEL_TEST11
-`ifndef MTKERNEL_TEST12
-    always @(posedge clk) if (dbus_we) $display("WE: addr=%x data=%x", dbus_addr, dbus_wdata);
-`endif
-`endif
-`endif
-`endif
-`endif
     wire        vmem_we    = dbus_we & dbus_addr[29] & !timer_addr_hit;
     wire [15:0] vmem_addr  = dbus_addr[15:0];
     wire  [2:0] vmem_wdata = dbus_wdata[2:0];
@@ -224,47 +220,26 @@ module machine_timer (
     reg [63:0] mtimecmp;
     reg [`XLEN-1:0] rdata;
 
-    function automatic [31:0] merge_word;
-        input [31:0] old_value;
-        input [31:0] new_value;
-        input [3:0]  byte_enable;
-        integer i;
-        begin
-            merge_word = old_value;
-
-            if (byte_enable[0])
-              merge_word[7:0] = new_value[7:0];
-            if (byte_enable[1])
-              merge_word[15:8] = new_value[15:8];
-            if (byte_enable[2])
-              merge_word[23:16] = new_value[23:16];
-            if (byte_enable[3])
-              merge_word[31:24] = new_value[31:24];
-        end
-    endfunction
-
     always @(posedge clk_i) begin
         if (rst_i) begin
             mtime    <= 64'd0;
             mtimecmp <= 64'hffffffffffffffff;
             rdata    <= {`XLEN{1'b0}};
         end else begin
-            case (we_i ? addr_i : {`XLEN{1'b0}})
-                MTIME_L: mtime <= {mtime[63:32],
-                                   merge_word(mtime[31:0], wdata_i[31:0], wstrb_i[3:0])};
-                MTIME_H: mtime <= {merge_word(mtime[63:32], wdata_i[31:0], wstrb_i[3:0]),
-                                   mtime[31:0]};
-                default: mtime <= mtime + 64'd1;
-            endcase
-
-            if (we_i) begin
+            if (we_i && (wstrb_i[3:0] == 4'b1111)) begin
                 case (addr_i)
-                    MTIMECMP_L: mtimecmp[31:0] <=
-                        merge_word(mtimecmp[31:0], wdata_i[31:0], wstrb_i[3:0]);
-                    MTIMECMP_H: mtimecmp[63:32] <=
-                        merge_word(mtimecmp[63:32], wdata_i[31:0], wstrb_i[3:0]);
+                    MTIME_L: mtime[31:0]  <= wdata_i[31:0];
+                    MTIME_H: mtime[63:32] <= wdata_i[31:0];
+                    default: mtime <= mtime + 64'd1;
+                endcase
+
+                case (addr_i)
+                    MTIMECMP_L: mtimecmp[31:0] <= wdata_i[31:0];
+                    MTIMECMP_H: mtimecmp[63:32] <= wdata_i[31:0];
                     default: ;
                 endcase
+            end else begin
+                mtime <= mtime + 64'd1;
             end
 
             if (re_i) begin

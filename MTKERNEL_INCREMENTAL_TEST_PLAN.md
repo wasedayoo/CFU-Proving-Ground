@@ -31,25 +31,24 @@ CFU-PG上でμT-Kernelを一度に起動しようとせず、CPU、メモリ、C
 ## 通常のμT-Kernelアプリケーション
 
 Test 12で確認したコンソール出力は、テスト専用ではなくCFU-PG向け
-μT-Kernelの共通機能として組み込む。通常のアプリケーションは次の1コマンドで
-コンパイル、Verilatorビルド、実行まで行う。
+μT-Kernelの共通機能として組み込む。通常のアプリケーションをVerilatorで
+実行する場合は次の標準ターゲットを使用する。
 
 ```bash
-make mtkernel-run
+make prog
+make build
+make run
 ```
 
 この実行経路はμT-Kernel本体、`libtm.c`、`libtm_printf.c`、RISC-V用
 `tm_com.c`、アプリケーションの`usermain()`を同じ共通コンパイル設定で
 まとめてビルドする。
-既定のアプリケーションはmtkernel_cfu側の標準`usermain.c`である。
-別のアプリケーションを使用する場合は次のように指定する。
+アプリケーションはmtkernel_cfu側の`kernel/usermain/usermain.c`に固定する。
+元のUARTタスクデモは同じディレクトリの`default_usermain.c`に保存するが、
+通常ビルドの対象には含めない。
 
-```bash
-make mtkernel-run MTKERNEL_APP_SRCS=app/my_usermain.c
-```
-
-ELFとメモリ初期値だけを生成する場合は`make mtkernel`、Verilator実行ファイル
-まで生成して実行しない場合は`make mtkernel-build`を使用する。
+`make prog`がELFとメモリ初期値を生成し、`make build`がVerilator実行ファイルを
+生成する。`make run`は生成済みの実行ファイルを起動する。
 
 アプリケーションでは追加のTest 12用ヘッダや通信ソースを指定せず、通常どおり
 `<tm/tmonitor.h>`をインクルードして`tm_printf()`を呼び出せる。
@@ -65,9 +64,8 @@ EXPORT INT usermain(void)
 }
 ```
 
-`make mtkernel-run`では`CFU_MTKERNEL_SIM`構成を使用する。`usermain()`がreturn
-するとμT-Kernelのシャットダウン経路からテストベンチへ終了値を書き込み、
-シミュレータも終了コード0で自動終了する。
+通常アプリケーションにはシミュレーション専用の終了通知を含めない。
+自動終了やPASS/FAIL判定が必要な検証は`tests/mtkernel/Makefile`から実行する。
 
 関連ファイルの役割は次のとおり。
 
@@ -87,21 +85,21 @@ EXPORT INT usermain(void)
 
 ### 回帰テストとの分離
 
-通常のアプリケーション実行は`make mtkernel-run`だけを使用する。`smoke`、
-Test 9、Test 11、Test 12はアプリケーションの別ビルド方式ではなく、移植層を
-段階別に診断する回帰テストとして残す。
+通常のアプリケーションには`make prog`、`make build`、`make run`を使用する。
+`smoke`、Test 9、Test 11、Test 12は、移植層を段階別に診断する回帰テストとして
+`tests/mtkernel/`から実行する。
 
 | テスト | 残す目的 |
 |---|---|
-| `mtkernel-smoke-run` | カーネルを介さず、起動・CSR・例外・タイマを検査 |
-| `mtkernel-test9-run` | μT-Kernel全体の初期化と初期タスク到達を検査 |
-| `mtkernel-test11-run` | タイマ待ちと複数タスク切替を検査 |
-| `mtkernel-test12-run` | 共通コンソールを含む実行経路を検査 |
+| `smoke-run` | カーネルを介さず、起動・CSR・例外・タイマを検査 |
+| `test9-run` | μT-Kernel全体の初期化と初期タスク到達を検査 |
+| `test11-run` | タイマ待ちと複数タスク切替を検査 |
+| `test12-run` | 共通コンソールを含む実行経路を検査 |
 
 すべての回帰テストは次の1コマンドで順番に実行できる。
 
 ```bash
-make mtkernel-check
+make -C tests/mtkernel check
 ```
 
 Test 9、Test 11、Test 12は通常アプリと同じ`MTKERNEL_CFLAGS`、
@@ -114,7 +112,7 @@ Test 9、Test 11、Test 12は通常アプリと同じ`MTKERNEL_CFLAGS`、
 CFU-PGディレクトリで次を実行する。
 
 ```bash
-make mtkernel-smoke-run
+make -C tests/mtkernel smoke-run
 ```
 
 このターゲットは、次の処理を順番に行う。
@@ -1034,8 +1032,8 @@ MTKERNEL_SMOKE: PASS
 
 ### 実装内容
 
-CFU-PG側へ`mtkernel-test9`、`mtkernel-test9-build`、`mtkernel-test9-run`を追加し、
-μT-Kernel本体を次の条件で直接ビルドできるようにした。
+Test 9は`tests/mtkernel/Makefile`の`test9-run`から実行し、μT-Kernel本体を
+次の条件で直接ビルドする。
 
 ```text
 -Os -std=gnu17 -march=rv32im_zicsr -mabi=ilp32
@@ -1224,9 +1222,9 @@ Task B finish
 
 ### 実装・検証内容
 
-CFU-PG側へ`mtkernel-test11`、`mtkernel-test11-build`、
-`mtkernel-test11-run`を追加した。Test 9/10と同じ最小カーネル構成を使用するが、
-テスト本体は`app/mtkernel_test11.c`としてCFU-PG側に分離した。
+Test 11は`tests/mtkernel/Makefile`の`test11-run`から実行する。Test 9/10と
+同じ最小カーネル構成を使用し、テスト本体は`tests/mtkernel/apps/test11.c`へ
+分離した。
 
 初期タスクを優先度1、タスクA/Bを同じ優先度2として生成する。各タスクには
 `TA_USERBUF`で独立した1024 byteのスタックを与え、初期タスクが
@@ -1313,11 +1311,10 @@ CFU-PGのDMEMと衝突していた。この実装は使用せず、現在はCFU-
 
 ### 実装・検証内容
 
-CFU-PG側へ`mtkernel-test12`、`mtkernel-test12-build`、
-`mtkernel-test12-run`を追加した。検証後、コンソールをTest 12専用構成から
-通常のCFU-PG向けμT-Kernel構成へ昇格した。`CFU_MTKERNEL`構成では
-`USE_TMONITOR`が有効になり、通常の`make mtkernel`もμT-Kernel本体の
-`libtm.c`、`libtm_printf.c`およびRISC-V用`tm_com.c`をリンクする。
+Test 12は`tests/mtkernel/Makefile`の`test12-run`から実行する。検証後、
+コンソールをTest 12専用構成から通常のCFU-PG向けμT-Kernel構成へ昇格した。
+`CFU_MTKERNEL`構成では`USE_TMONITOR`が有効になり、通常の`make prog`も
+μT-Kernel本体の`libtm.c`、`libtm_printf.c`およびRISC-V用`tm_com.c`をリンクする。
 Test 12専用だった`mtkernel_test12_config.h`と`mtkernel_test12_tm_com.c`は削除した。
 
 シミュレーション専用putchar MMIOを次のアドレスとした。
@@ -1387,9 +1384,10 @@ Test 11は117524サイクル、105626命令退役、Test 9/10は15680サイク�
 
 ### 目的
 
-Verilatorで確認済みのμT-Kernel構成をArty A7へ載せ、3個のLEDとUART出力を
-通して、3個のユーザタスク、タスク切替およびシステムタイマが動作することを
-確認する。
+Verilatorで確認済みのμT-Kernel構成をArty A7へ載せ、3個のLEDを通して、
+3個のユーザタスク、タスク切替およびシステムタイマが動作することを確認する。
+UART回路とT-Monitor出力機能は同じ構成に含まれるが、このLEDサンプル自身は
+UARTへ文字を送信しない。
 
 ### 対象構成
 
@@ -1400,15 +1398,15 @@ Verilatorで確認済みのμT-Kernel構成をArty A7へ載せ、3個のLEDとUA
 - UART形式: 1,000,000 baud、8 data bits、no parity、1 stop bit
 - UART MMIO: `0x80000000`へ送信データ、`0x80000004`のbit 0に送信可能状態
 - LED0: H5、LED1: J5、LED2: T9
-- LED MMIO: `0x80000008`へ書いたbitを反転し、`0x80000004`のbit 10:8から
+- LED MMIO: `0x80000008`へ書いたbitを反転し、`0x8000000c`のbit 2:0から
   現在のLED状態を読み出す
 - FPGA用タイマクロック: 100 MHz
 
 ### 実装したサンプル
 
-`app/mtkernel_arty_a7.c`には`task_a()`、`task_b()`、`task_c()`の3個のタスク関数を
-定義する。`usermain()`は各タスクを`tk_cre_tsk()`で生成し、`tk_sta_tsk()`で
-すべて開始する。各タスクが担当する処理は次のとおり。
+mtkernel_cfuの`kernel/usermain/usermain.c`には3個のタスク関数を定義する。
+`usermain()`は各タスクを`tk_cre_tsk()`で生成し、`tk_sta_tsk()`ですべて開始する。
+各タスクが担当する処理は次のとおり。
 
 - Task Aは`tk_dly_tsk(1000)`から復帰するたびにLED0を反転する。
 - Task Bは`tk_dly_tsk(2000)`から復帰するたびにLED1を反転する。
@@ -1440,26 +1438,28 @@ RISC-V移植の`END_CRITICAL_SECTION`には当初、タスク独立部での直�
 
 ### 実行手順
 
-VerilatorでサンプルとUART出力を確認する。
+Verilatorでサンプルを実行する。アプリケーションは自動終了しないため、
+必要な期間を観測した後に`Ctrl-C`で停止する。
 
 ```sh
-make mtkernel-arty-a7-sim
+make prog
+make build
+make run
 ```
 
 FPGA用ELFとビットストリームを生成する。
 
 ```sh
-make mtkernel-arty-a7-bit
+make prog
+make init
+make bit
 ```
 
 接続済みのArty A7へ書き込む。
 
 ```sh
-make mtkernel-arty-a7-conf
+make conf
 ```
-
-書き込み後、使用環境のシリアルデバイスを1,000,000 baud、8N1で開き、リセットを
-解除してUARTログを確認する。デバイス名は環境によって`/dev/ttyUSB0`などになる。
 
 ### 現在の検証結果
 
@@ -1488,40 +1488,55 @@ make mtkernel-arty-a7-conf
 論理実装、Verilator検証、合成、配置配線、ビットストリーム生成は完了している。
 上記のLED周期を実機で確認した時点でTest 13を完了とする。
 
-## テスト13完了後のファイル整理
+## テストコードのファイル整理（完了）
 
-コンソール出力とTest 13のFPGA実機確認が完了するまでは、UART実装、`tm_com.c`、
-テストベンチ、FPGAビルド手順が変わる可能性がある。このため、それまでは現在の
-テストターゲットと検査コードを移動しない。
-
-Test 13がPASSした時点で通常アプリケーションと回帰テストの境界を確定し、次の
-整理をまとめて実施する。
+通常実装と回帰テストの境界を明確にするため、CFU-PG固有のμT-Kernelテストを
+`tests/mtkernel/`へ分離した。以後、新機能のテストアプリ、テスト専用RTL監視、
+PASS/FAILシグネチャおよびテスト実行規則はこのディレクトリへ追加する。
 
 ```text
 CFU-Proving-Ground/
-├── Makefile                 # 通常アプリ用mtkernel、build、runだけ
+├── Makefile                 # 通常アプリとFPGAビルドのみ
 ├── app/
 │   └── mtkernel.ld          # 通常アプリ用リンカスクリプト
 └── tests/mtkernel/
-    ├── Makefile             # smoke、Test 9、11、12、13
+    ├── Makefile             # smoke、Test 9、11、12、13を実行
+    ├── README.md            # 新しい回帰テストの追加規則
     ├── top_test.v           # PASS/FAIL判定とテスト用監視
-    ├── apps/                # 各テストのusermain
-    ├── ld/                  # テスト専用リンカスクリプト
-    └── scripts/             # トレース解析など
+    ├── apps/
+    │   ├── test9.c
+    │   ├── test11.c
+    │   └── test12.c
+    ├── smoke/               # CSR、MRET、ECALL、タイマ割込み低レベル試験
+    ├── ld/                  # .test_statusを含むテスト専用リンカスクリプト
+    └── scripts/             # リタイアトレース解析
 ```
 
-整理時には次を行う。
+実施した整理は次のとおり。
 
-- `app/mtkernel_test11.c`と`app/mtkernel_test12.c`を`tests/mtkernel/apps/`へ移す。
-- smokeおよびTest 9以降のMakeターゲットを`tests/mtkernel/Makefile`へ移す。
-- `top.v`と`main.v`からテスト固有の条件分岐とPASS/FAIL判定を取り除く。
-- 通常アプリ用のルートMakefileには`mtkernel`、`mtkernel-build`、
-  `mtkernel-run`だけを残す。
-- 回帰テストは`make -C tests/mtkernel check`でまとめて実行できるようにする。
-- シミュレーション用とFPGA用のコンソール下位層を明確に分離する。
+- ルート`Makefile`からsmoke、Test 9、11、12および一括回帰ターゲットを削除した。
+- `proc.v`から`MTKERNEL_SMOKE`によるCSR初期値変更とデバッグ表示を削除した。
+  smokeで必要な非ゼロCSR初期値は`top_test.v`からのみ注入する。
+- `top.v`と`main.v`からテスト選択条件、PASS/FAIL判定、テスト用トレースを削除した。
+- `app/mtkernel.ld`と通常のメモリ初期化規則から`.test_status`を削除した。
+- `mtkernel_cfu/kernel/usermain/usermain.c`からTest 9/10実装と
+  `CFU_MTKERNEL_TEST9`条件分岐を削除した。
+- `mtkernel_cfu`に置かれていたsmoke専用C/アセンブリを`tests/mtkernel/smoke/`へ
+  移し、カーネル移植ソースからテストファイルを除去した。
+- Test 9、11、12の`usermain()`は`tests/mtkernel/apps/`へ集約した。
 
-テストをCFU-PGの外側へ完全に分離すると、RTLとテストのコミットがずれる可能性が
-あるため、原則として同じリポジトリ内の`tests/mtkernel/`へ配置する。
+全回帰テストは次のコマンドで実行する。
+
+```sh
+make -C tests/mtkernel check
+```
+
+整理後にsmoke、Test 9、Test 11、Test 12が従来と同じ結果でPASSし、Test 13の
+FPGA向けELFビルドも成功した。通常側の`make prog`と`make build`でも、LED用
+`usermain.c`を含むELFとVerilator実行ファイルの生成に成功した。
+
+テストをCFU-PGの外側へ分離するとRTLとテストのコミットがずれるため、今後も
+CFU-PG固有の回帰テストは同じリポジトリの`tests/mtkernel/`へ配置する。
 
 ## 各テストで必ず保存する情報
 
@@ -1540,7 +1555,6 @@ CFU-Proving-Ground/
 
 ## 推奨する直近の作業
 
-Test 13の実装とビットストリーム生成まで完了しているため、次はArty A7を接続して
-`make mtkernel-arty-a7-conf`を実行し、1,000,000 baudのUARTログで最終PASS文字列を
-確認する。実機でTest 13をPASSにした後、この計画に従ってテスト一式を
-`tests/mtkernel/`へ移す。
+テストコードの分離と回帰確認は完了した。次はArty A7を接続して
+`make prog`、`make init`、`make bit`、`make conf`を順に実行し、
+LD4、LD5、LD6の周期反転を実機で確認する。
