@@ -18,6 +18,11 @@ set_property -dict { PACKAGE_PIN V11 IOSTANDARD LVCMOS33 } [get_ports { st7789_S
 set_property -dict { PACKAGE_PIN A9    IOSTANDARD LVCMOS33 } [get_ports { rxd_i }];
 set_property -dict { PACKAGE_PIN D10   IOSTANDARD LVCMOS33 } [get_ports { txd_o }];
 
+## User LEDs
+set_property -dict { PACKAGE_PIN H5 IOSTANDARD LVCMOS33 } [get_ports { led_o[0] }];
+set_property -dict { PACKAGE_PIN J5 IOSTANDARD LVCMOS33 } [get_ports { led_o[1] }];
+set_property -dict { PACKAGE_PIN T9 IOSTANDARD LVCMOS33 } [get_ports { led_o[2] }];
+
 #####
 create_pblock PB0
 resize_pblock [get_pblocks PB0] -add SLICE_X36Y50:SLICE_X65Y74

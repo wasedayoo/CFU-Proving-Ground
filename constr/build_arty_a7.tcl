@@ -4,7 +4,7 @@
 set top_dir [pwd]
 set proj_name main
 set part_name xc7a35tcsg324-1
-set src_files [list $top_dir/proc.v $top_dir/cfu.v $top_dir/main.v]
+set src_files [list $top_dir/proc.v $top_dir/cfu.v $top_dir/uart_tx.v $top_dir/main.v]
 set nproc [exec nproc]
 
 set file [open "$top_dir/config.vh"]
@@ -18,6 +18,7 @@ if {[regexp {`define\s+CLK_FREQ_MHZ\s+(\d+)} [read $file] -> freq]} {
 close $file
 
 create_project -force $proj_name $top_dir/vivado -part $part_name
+set_property verilog_define {ARTY_A7} [get_filesets sources_1]
 set_property strategy Flow_PerfOptimized_high [get_runs synth_1]
 set_property strategy Performance_ExplorePostRoutePhysOpt [get_runs impl_1]
 
@@ -27,7 +28,7 @@ for {set i 0} {$i < $argc} {incr i} {
         set src_files [concat $src_files [glob -nocomplain $top_dir/cfu/*.v]]
         set tcl_files [glob -nocomplain $top_dir/cfu/*.tcl]
         foreach tcl_file $tcl_files {source $tcl_file}
-        set_property verilog_define {USE_HLS} [get_filesets  sources_1]
+        set_property verilog_define {ARTY_A7 USE_HLS} [get_filesets sources_1]
         update_compile_order -fileset sources_1
         break;
     }

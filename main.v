@@ -7,6 +7,11 @@
 
 module main (
     input  wire clk_i,
+`ifdef ARTY_A7
+    input  wire rxd_i,
+    output wire txd_o,
+    output wire [2:0] led_o,
+`endif
     output wire st7789_SDA,
     output wire st7789_SCL,
     output wire st7789_DC,
@@ -39,17 +44,23 @@ module main (
     localparam [1:0] RDATA_DMEM  = 2'd0;
     localparam [1:0] RDATA_PERF  = 2'd1;
     localparam [1:0] RDATA_TIMER = 2'd2;
+    localparam [1:0] RDATA_UART  = 2'd3;
 
     wire timer_addr_hit = (dbus_addr == 32'h6000bff8) ||
                           (dbus_addr == 32'h6000bffc) ||
                           (dbus_addr == 32'h60004000) ||
                           (dbus_addr == 32'h60004004);
+    wire uart_addr_hit = (dbus_addr == 32'h80000000) ||
+                         (dbus_addr == 32'h80000004) ||
+                         (dbus_addr == 32'h80000008);
     reg [1:0] rdata_sel = RDATA_DMEM;
     always @(posedge clk) begin
-        rdata_sel <= timer_addr_hit ? RDATA_TIMER :
+        rdata_sel <= uart_addr_hit  ? RDATA_UART :
+                     timer_addr_hit ? RDATA_TIMER :
                      dbus_addr[30]  ? RDATA_PERF : RDATA_DMEM;
     end
-    assign dbus_rdata = (rdata_sel == RDATA_TIMER) ? timer_rdata :
+    assign dbus_rdata = (rdata_sel == RDATA_UART)  ? uart_rdata :
+                        (rdata_sel == RDATA_TIMER) ? timer_rdata :
                         (rdata_sel == RDATA_PERF)  ? {(`XLEN / 32){perf_rdata}} :
                                                     dmem_rdata;
 
@@ -104,6 +115,44 @@ module main (
         .rdata_o (timer_rdata),
         .irq_o   (timer_irq)
     );
+
+    wire uart_we = dbus_we && (dbus_addr == 32'h80000000) && dbus_wstrb[0];
+    wire led_toggle_we = dbus_we && (dbus_addr == 32'h80000008) && dbus_wstrb[0];
+    wire uart_ready;
+    wire uart_txd;
+    reg [2:0] led_state;
+    wire [`XLEN-1:0] uart_rdata = {{(`XLEN-11){1'b0}}, led_state,
+                                    7'b0000000, uart_ready};
+    always @(posedge clk) begin
+        if (rst) begin
+            led_state <= 3'b000;
+        end else if (led_toggle_we) begin
+            led_state <= led_state ^ dbus_wdata[2:0];
+        end
+    end
+`ifdef SYNTHESIS
+    localparam integer UART_CLOCK_HZ = `CLK_FREQ_MHZ * 1000000;
+`else
+    /* The accelerated RTL model and its machine timer run at 1 MHz. */
+    localparam integer UART_CLOCK_HZ = 1000000;
+`endif
+    uart_tx #(
+        .CLOCK_HZ (UART_CLOCK_HZ),
+        .BAUD_RATE (`BAUD_RATE)
+    ) console_uart (
+        .clk_i   (clk),
+        .rst_i   (rst),
+        .we_i    (uart_we),
+        .data_i  (dbus_wdata[7:0]),
+        .ready_o (uart_ready),
+        .txd_o   (uart_txd)
+    );
+
+`ifdef ARTY_A7
+    assign txd_o = uart_txd;
+    assign led_o = led_state;
+    wire unused_rxd = rxd_i;
+`endif
 
 `ifndef SYNTHESIS
 `ifndef MTKERNEL

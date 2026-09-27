@@ -37,7 +37,9 @@ HLS_CFG  := constr/cfu_hls.cfg
 	mtkernel-smoke mtkernel-smoke-build mtkernel-smoke-run \
 	mtkernel-test9 mtkernel-test9-build mtkernel-test9-run \
 	mtkernel-test11 mtkernel-test11-build mtkernel-test11-run \
-	mtkernel-test12 mtkernel-test12-build mtkernel-test12-run
+	mtkernel-test12 mtkernel-test12-build mtkernel-test12-run \
+	mtkernel-arty-a7 mtkernel-arty-a7-sim mtkernel-arty-a7-bit \
+	mtkernel-arty-a7-conf
 all: prog build
 
 build:
@@ -95,6 +97,8 @@ MTKERNEL_CPPFLAGS := -D_IOTE_RISCV_ -DCFU_MTKERNEL \
 	-I$(MTKERNEL_DIR)/include -I$(MTKERNEL_DIR)/config \
 	-I$(MTKERNEL_DIR)/kernel/knlinc -I$(MTKERNEL_DIR)/kernel/sysdepend
 MTKERNEL_LDFLAGS := -Wl,--gc-sections -Wl,--build-id=none -Tapp/mtkernel.ld
+MTKERNEL_CLK_FREQ_MHZ := $(shell awk '/CLK_FREQ_MHZ/ {print $$3; exit}' config.vh)
+MTKERNEL_FPGA_TIMER_HZ := $(shell expr $(MTKERNEL_CLK_FREQ_MHZ) \* 1000000)
 
 mtkernel: MTKERNEL_BUILD_DEFS := -DCFU_MTKERNEL_SIM
 mtkernel: MTKERNEL_BUILD_MAP := build/mtkernel.map
@@ -146,7 +150,12 @@ mtkernel-test12: MTKERNEL_BUILD_DEFS := -DCFU_MTKERNEL_TEST12
 mtkernel-test12: MTKERNEL_BUILD_MAP := build/mtkernel-test12.map
 mtkernel-test12: MTKERNEL_BUILD_SRCS := $(MTKERNEL_TEST12_C_SRCS)
 
-mtkernel mtkernel-test9 mtkernel-test11 mtkernel-test12:
+mtkernel-arty-a7: MTKERNEL_BUILD_DEFS := \
+	-DCFU_MTKERNEL_FPGA -DCFU_MTKERNEL_TIMER_HZ=$(MTKERNEL_FPGA_TIMER_HZ)UL
+mtkernel-arty-a7: MTKERNEL_BUILD_MAP := build/mtkernel-arty-a7.map
+mtkernel-arty-a7: MTKERNEL_BUILD_SRCS := app/mtkernel_arty_a7.c
+
+mtkernel mtkernel-test9 mtkernel-test11 mtkernel-test12 mtkernel-arty-a7:
 	mkdir -p build
 	$(GCC) $(MTKERNEL_CFLAGS) $(MTKERNEL_CPPFLAGS) $(MTKERNEL_BUILD_DEFS) \
 		$(MTKERNEL_LDFLAGS) -Wl,-Map,$(MTKERNEL_BUILD_MAP) -o build/main.elf \
@@ -164,6 +173,16 @@ mtkernel-test12-run: mtkernel-test12-build
 	./obj_dir_mtkernel_test12/top
 	awk -f scripts/annotate_retire_trace.awk build/main.dump \
 		build/mtkernel-test12.trace > build/mtkernel-test12.trace.asm
+
+mtkernel-arty-a7-sim:
+	$(MAKE) mtkernel-run MTKERNEL_APP_SRCS=app/mtkernel_arty_a7.c
+
+mtkernel-arty-a7-bit: mtkernel-arty-a7
+	$(MAKE) init TARGET=arty_a7
+	$(MAKE) bit TARGET=arty_a7
+
+mtkernel-arty-a7-conf: mtkernel-arty-a7-bit
+	$(MAKE) conf TARGET=arty_a7
 
 mtkernel-check:
 	$(MAKE) mtkernel-smoke-run
