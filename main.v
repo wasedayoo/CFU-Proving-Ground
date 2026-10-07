@@ -120,7 +120,7 @@ module main (
         .irq_o   (timer_irq)
     );
 
-    /* UART MMIO: transmit at 0x80000000, status at 0x80000004. */
+    /* UART MMIO */
     wire uart_we = dbus_we && (dbus_addr == 32'h80000000) && dbus_wstrb[0];
     wire uart_ready;
     wire uart_txd;
@@ -128,7 +128,6 @@ module main (
 `ifdef SYNTHESIS
     localparam integer UART_CLOCK_HZ = `CLK_FREQ_MHZ * 1000000;
 `else
-    /* The accelerated RTL model and its machine timer run at 1 MHz. */
     localparam integer UART_CLOCK_HZ = 1000000;
 `endif
     uart_tx #(
@@ -143,7 +142,7 @@ module main (
         .txd_o   (uart_txd)
     );
 
-    /* LED MMIO: toggle at 0x80000008, status at 0x8000000c. */
+    /* LED MMIO */
     wire led_toggle_we = dbus_we && (dbus_addr == 32'h80000008) && dbus_wstrb[0];
     reg [2:0] led_state;
     wire [`XLEN-1:0] led_rdata = {{(`XLEN-3){1'b0}}, led_state};
