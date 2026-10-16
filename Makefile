@@ -48,6 +48,8 @@ MTKERNEL_DIR ?= ../mtkernel_cfu
 MTKERNEL_COMMON_C_SRCS := \
 	$(wildcard $(MTKERNEL_DIR)/kernel/tkernel/*.c) \
 	$(wildcard $(MTKERNEL_DIR)/kernel/tstdlib/*.c) \
+	$(wildcard $(MTKERNEL_DIR)/lib/libtk/*.c) \
+	$(wildcard $(MTKERNEL_DIR)/lib/libtk/sysdepend/cpu/core/riscv/*.c) \
 	$(MTKERNEL_DIR)/kernel/sysinit/sysinit.c \
 	$(MTKERNEL_DIR)/kernel/inittask/inittask.c \
 	$(wildcard $(MTKERNEL_DIR)/kernel/sysdepend/iote_riscv/*.c) \
@@ -56,15 +58,17 @@ MTKERNEL_COMMON_C_SRCS := \
 	$(MTKERNEL_DIR)/kernel/sysdepend/cpu/core/riscv/interrupt.c \
 	$(MTKERNEL_DIR)/lib/libtm/libtm.c \
 	$(MTKERNEL_DIR)/lib/libtm/libtm_printf.c \
-	$(MTKERNEL_DIR)/lib/libtm/sysdepend/iote_riscv/tm_com.c
+	$(MTKERNEL_DIR)/lib/libtm/sysdepend/iote_riscv/tm_com.c \
+	app/st7789.c
 MTKERNEL_ASM_SRCS := \
 	$(MTKERNEL_DIR)/kernel/sysdepend/cpu/core/riscv/startup.S \
 	$(MTKERNEL_DIR)/kernel/sysdepend/cpu/core/riscv/dispatch.S
-MTKERNEL_APP_SRC := $(MTKERNEL_DIR)/kernel/usermain/usermain.c
+MTKERNEL_APP_SRC ?= $(MTKERNEL_DIR)/kernel/usermain/usermain0_arty_a7.c
 MTKERNEL_CFLAGS := -Os -std=gnu17 -march=rv32im_zicsr -mabi=ilp32 \
 	-ffreestanding -fno-builtin -ffunction-sections -fdata-sections \
 	-nostdlib -mno-relax
 MTKERNEL_CPPFLAGS := -D_IOTE_RISCV_ -DCFU_MTKERNEL \
+	-Iapp \
 	-I$(MTKERNEL_DIR)/include -I$(MTKERNEL_DIR)/config \
 	-I$(MTKERNEL_DIR)/kernel/knlinc -I$(MTKERNEL_DIR)/kernel/sysdepend
 MTKERNEL_LDFLAGS := -Wl,--gc-sections -Wl,--build-id=none -Tapp/mtkernel.ld
@@ -157,6 +161,16 @@ bit:
 	@if [ -f vivado/main.runs/impl_i/main.ltx ]; then \
 		cp -f vivado/main.runs/impl_i/main.ltx build/.; \
 	fi
+
+MTKERNEL_ARTY_BITS := $(addprefix build/main,$(addsuffix .bit,1 2 3 4 5 6 7 8 9))
+
+.PHONY: arty-bits
+arty-bits: $(MTKERNEL_ARTY_BITS)
+
+build/main%.bit: $(MTKERNEL_DIR)/kernel/usermain/usermain%_arty_a7.c
+	$(MAKE) prog MTKERNEL_APP_SRC=$<
+	$(MAKE) bit
+	cp build/main.bit $@
 
 conf:
 	@if [ ! -f build/main.bit ]; then \

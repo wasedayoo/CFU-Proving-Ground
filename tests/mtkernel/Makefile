@@ -20,6 +20,7 @@ KERNEL_CFLAGS := -Os -std=gnu17 -march=rv32im_zicsr -mabi=ilp32 \
 	-ffreestanding -fno-builtin -ffunction-sections -fdata-sections \
 	-nostdlib -mno-relax
 KERNEL_CPPFLAGS := -D_IOTE_RISCV_ -DCFU_MTKERNEL \
+	-include $(CURDIR)/mtkernel_test_config.h \
 	-I$(MTKERNEL_DIR)/include -I$(MTKERNEL_DIR)/config \
 	-I$(MTKERNEL_DIR)/kernel/knlinc -I$(MTKERNEL_DIR)/kernel/sysdepend
 KERNEL_LDFLAGS := -Wl,--gc-sections -Wl,--build-id=none -Tld/mtkernel.ld
