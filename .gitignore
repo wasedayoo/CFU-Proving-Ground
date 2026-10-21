@@ -10,3 +10,7 @@ main.xdc
 vitis/
 cfu/
 vitis-comp.json
+/test/
+/tests/
+/MTKERNEL_INCREMENTAL_TEST_PLAN.md
+/uart_tx.v
